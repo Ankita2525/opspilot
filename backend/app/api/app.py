@@ -10,6 +10,7 @@ from backend.app.agent.hypotheses import HypothesisEngine
 from backend.app.agent.incident_response import IncidentResponseCoordinator
 from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow
 from backend.app.agent.workflow import InvestigationWorkflow
+from backend.app.api.incident_stream import streamed_incident_response
 from backend.app.api.schemas import (
     HealthResponse,
     IncidentApprovalResponse,
@@ -19,6 +20,7 @@ from backend.app.api.schemas import (
     SubmitApprovalRequest,
 )
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
+from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
 from backend.app.observability.tracing import get_tracer
@@ -68,6 +70,7 @@ def create_app(
 
     def _runtime_for_scenario(
         scenario_id: str,
+        events: InvestigationEventEmitter | None = None,
     ) -> tuple[SimulatedEnvironment, IncidentResponseCoordinator]:
         environment = SimulatedEnvironment()
         environment.load_scenario(scenario_id)
@@ -77,6 +80,7 @@ def create_app(
             investigation_workflow=InvestigationWorkflow(
                 tools=diagnostics,
                 hypothesis_engine=HypothesisEngine(resolved_provider),
+                events=events,
             ),
             remediation_workflow=RemediationApprovalWorkflow(
                 remediation_tools=RemediationTools(environment, approvals),
@@ -87,29 +91,11 @@ def create_app(
         )
         return environment, coordinator
 
-    @app.get("/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
-        return HealthResponse(status="ok", service="opspilot")
-
-    @app.get("/api/scenarios", response_model=list[ScenarioSummary])
-    def list_public_scenarios() -> list[ScenarioSummary]:
-        return [
-            ScenarioSummary(
-                id=scenario.id,
-                title=scenario.title,
-                affected_service=scenario.affected_service,
-            )
-            for scenario in list_scenarios()
-        ]
-
-    @app.post("/api/incidents/start", response_model=IncidentStartResponse)
-    def start_incident(body: StartIncidentRequest) -> IncidentStartResponse:
-        try:
-            scenario = get_scenario(body.scenario_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        environment, coordinator = _runtime_for_scenario(scenario.id)
+    def _begin_incident(
+        scenario,
+        events: InvestigationEventEmitter | None = None,
+    ):
+        environment, coordinator = _runtime_for_scenario(scenario.id, events=events)
         incident_id = scenario.id
         remediation_thread_id = incident_id
         proposal_id = f"{incident_id}-proposal"
@@ -137,6 +123,31 @@ def create_app(
                 created_at=created_at,
             ),
         )
+        return started
+
+    @app.get("/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
+        return HealthResponse(status="ok", service="opspilot")
+
+    @app.get("/api/scenarios", response_model=list[ScenarioSummary])
+    def list_public_scenarios() -> list[ScenarioSummary]:
+        return [
+            ScenarioSummary(
+                id=scenario.id,
+                title=scenario.title,
+                affected_service=scenario.affected_service,
+            )
+            for scenario in list_scenarios()
+        ]
+
+    @app.post("/api/incidents/start", response_model=IncidentStartResponse)
+    def start_incident(body: StartIncidentRequest) -> IncidentStartResponse:
+        try:
+            scenario = get_scenario(body.scenario_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        started = _begin_incident(scenario)
         investigation = started.investigation
         metrics = investigation["metrics"]
         hypothesis_result = investigation["hypothesis_result"]
@@ -159,6 +170,18 @@ def create_app(
             approval_request=started.approval_request,
             resolved=False,
             selected_skills=list(investigation.get("selected_skills") or []),
+        )
+
+    @app.post("/api/incidents/stream")
+    async def stream_incident(body: StartIncidentRequest):
+        try:
+            scenario = get_scenario(body.scenario_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return streamed_incident_response(
+            scenario=scenario,
+            begin_incident=_begin_incident,
+            now=now,
         )
 
     @app.post(
