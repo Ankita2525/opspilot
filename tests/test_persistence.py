@@ -314,9 +314,12 @@ def test_records_contain_no_chain_of_thought_fields() -> None:
         assert "chain-of-thought" not in field_names
 
 
+VENDOR_FREE_FILES = ("models.py", "repository.py", "memory.py")
+
+
 def test_repository_contains_no_database_vendor_implementation() -> None:
     assert isinstance(_repo(), OpsPilotRepository)
-    for path in PERSISTENCE_DIR.glob("*.py"):
-        source = path.read_text(encoding="utf-8").lower()
+    for name in VENDOR_FREE_FILES:
+        source = (PERSISTENCE_DIR / name).read_text(encoding="utf-8").lower()
         for token in VENDOR_TOKENS:
-            assert token not in source, f"{token} found in {path.name}"
+            assert token not in source, f"{token} found in {name}"

@@ -5,7 +5,9 @@ from backend.app.persistence.models import (
     EvaluationRecord,
     IncidentRecord,
 )
+from backend.app.persistence.postgres import PostgresOpsPilotRepository
 from backend.app.persistence.repository import OpsPilotRepository
+from backend.app.persistence.schema import initialize_schema
 
 __all__ = [
     "ApprovalRecord",
@@ -14,4 +16,6 @@ __all__ = [
     "IncidentRecord",
     "InMemoryOpsPilotRepository",
     "OpsPilotRepository",
+    "PostgresOpsPilotRepository",
+    "initialize_schema",
 ]
