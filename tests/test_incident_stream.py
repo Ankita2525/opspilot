@@ -199,7 +199,8 @@ def test_existing_start_endpoint_remains_unchanged() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "approval_required"
-    assert payload["incident_id"] == CHECKOUT_ID
+    assert payload["incident_id"] != CHECKOUT_ID
+    assert payload["scenario_id"] == CHECKOUT_ID
     assert payload["metrics"]["p95_latency_ms"] == 1940
     assert payload["selected_skills"] == [DEPLOYMENT_SKILL, POSTGRES_SKILL]
 
@@ -213,6 +214,8 @@ def test_stream_persists_incident_and_pending_approval() -> None:
     incident = repo.get_incident(incident_id)
     approval = repo.get_approval(proposal_id)
     assert incident is not None
+    assert incident.incident_id != CHECKOUT_ID
+    assert incident.scenario_id == CHECKOUT_ID
     assert incident.status == "approval_required"
     assert incident.resolved is False
     assert approval is not None

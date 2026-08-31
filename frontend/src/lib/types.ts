@@ -1,3 +1,27 @@
+export const INVESTIGATION_EVENT_TYPES = [
+  "incident_started",
+  "step_started",
+  "step_completed",
+  "context_built",
+  "skills_selected",
+  "hypothesis_generated",
+  "approval_required",
+  "incident_completed",
+  "incident_failed",
+] as const;
+
+export type InvestigationEventType = (typeof INVESTIGATION_EVENT_TYPES)[number];
+
+export type InvestigationEvent = {
+  event_type: InvestigationEventType;
+  incident_id: string;
+  sequence: number;
+  timestamp: string;
+  step: string | null;
+  message: string;
+  data: Record<string, unknown>;
+};
+
 export type Scenario = {
   id: string;
   title: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalPanel } from "@/components/ApprovalPanel";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
@@ -9,17 +9,21 @@ import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
 import { ScenarioCard } from "@/components/ScenarioCard";
-import { getScenarios, startIncident, submitApproval } from "@/lib/api";
+import { getScenarios, submitApproval } from "@/lib/api";
+import { streamIncident } from "@/lib/incident-stream";
 import {
   formatErrorRate,
   formatLatency,
   humanizeServiceName,
 } from "@/lib/labels";
-import type {
-  IncidentApprovalResponse,
-  IncidentStartResponse,
-  Scenario,
-} from "@/lib/types";
+import {
+  applyInvestigationEvent,
+  createLiveIncidentState,
+  timelineSteps,
+  type LiveIncidentState,
+} from "@/lib/live-incident";
+import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
+import type { ApprovalRequest, IncidentApprovalResponse, Scenario } from "@/lib/types";
 
 type Phase =
   | "loading"
@@ -27,7 +31,8 @@ type Phase =
   | "investigating"
   | "active"
   | "resolved"
-  | "rejected";
+  | "rejected"
+  | "failed";
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -35,7 +40,7 @@ export default function Home() {
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(
     null,
   );
-  const [incident, setIncident] = useState<IncidentStartResponse | null>(null);
+  const [live, setLive] = useState<LiveIncidentState | null>(null);
   const [approval, setApproval] = useState<IncidentApprovalResponse | null>(
     null,
   );
@@ -44,12 +49,24 @@ export default function Home() {
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
   >("load");
+  const generationRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const selectedScenario =
     scenarios.find((item) => item.id === selectedScenarioId) ?? null;
   const activeScenario =
-    scenarios.find((item) => item.id === incident?.scenario_id) ??
-    selectedScenario;
+    scenarios.find((item) => item.id === live?.scenarioId) ?? selectedScenario;
+
+  const abortActiveStream = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
+  const supersedeStream = useCallback(() => {
+    generationRef.current += 1;
+    abortActiveStream();
+    return generationRef.current;
+  }, [abortActiveStream]);
 
   const loadScenarios = useCallback(async () => {
     setRetryAction("load");
@@ -101,6 +118,9 @@ export default function Home() {
     void loadOnMount();
     return () => {
       cancelled = true;
+      generationRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
     };
   }, []);
 
@@ -108,35 +128,75 @@ export default function Home() {
     if (!selectedScenario) {
       return;
     }
+    const generation = supersedeStream();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setError(null);
     setRetryAction("start");
     setBusy(true);
+    setApproval(null);
+    setLive(createLiveIncidentState());
     setPhase("investigating");
+
     try {
-      const started = await startIncident(selectedScenario.id);
-      setIncident(started);
-      setPhase("active");
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Investigation failed. Try again.",
+      await streamIncident({
+        scenarioId: selectedScenario.id,
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (generation !== generationRef.current) {
+            return;
+          }
+          setLive((current) =>
+            applyInvestigationEvent(current ?? createLiveIncidentState(), event),
+          );
+          if (event.event_type === "approval_required") {
+            setPhase("active");
+            setBusy(false);
+          }
+          if (event.event_type === "incident_failed") {
+            setError(STREAM_FAILURE_MESSAGE);
+            setPhase("failed");
+            setBusy(false);
+          }
+        },
+      });
+      if (generation !== generationRef.current) {
+        return;
+      }
+      setLive((current) =>
+        current ? { ...current, streaming: false } : current,
       );
-      setPhase("ready");
+    } catch (cause) {
+      if (generation !== generationRef.current || isAbortError(cause)) {
+        return;
+      }
+      setError(STREAM_FAILURE_MESSAGE);
+      setPhase("failed");
+      setLive((current) =>
+        current
+          ? { ...current, streaming: false, failed: true }
+          : current,
+      );
     } finally {
-      setBusy(false);
+      if (generation === generationRef.current) {
+        setBusy(false);
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+      }
     }
   }
 
   async function handleApproval(approved: boolean) {
-    if (!incident) {
+    if (!live?.incidentId) {
       return;
     }
     setError(null);
     setRetryAction(approved ? "approve" : "reject");
     setBusy(true);
     try {
-      const result = await submitApproval(incident.incident_id, approved);
+      const result = await submitApproval(live.incidentId, approved);
       setApproval(result);
       setPhase(result.status === "resolved" ? "resolved" : "rejected");
     } catch (cause) {
@@ -165,17 +225,37 @@ export default function Home() {
   }
 
   function resetToSelection() {
-    setIncident(null);
+    supersedeStream();
+    setLive(null);
     setApproval(null);
     setError(null);
     setBusy(false);
     setPhase("ready");
   }
 
-  const inIncident =
-    phase === "active" || phase === "resolved" || phase === "rejected";
-  const headerPhase =
-    phase === "resolved" || phase === "rejected" ? phase : "active";
+  const inWorkspace =
+    phase === "investigating" ||
+    phase === "active" ||
+    phase === "resolved" ||
+    phase === "rejected" ||
+    phase === "failed";
+  const headerPhase: "investigating" | "active" | "resolved" | "rejected" | "failed" =
+    phase === "ready" || phase === "loading" ? "investigating" : phase;
+  const service =
+    live?.affectedService ??
+    activeScenario?.affected_service ??
+    selectedScenario?.affected_service ??
+    "";
+  const title = activeScenario?.title ?? selectedScenario?.title ?? "Incident";
+  const approvalRequest = live?.approval
+    ? toApprovalRequest(live.incidentId ?? "", live.approval)
+    : null;
+  const originalMetrics = live?.metrics
+    ? {
+        ...live.metrics,
+        service: live.metrics.service || service,
+      }
+    : null;
 
   return (
     <div className="page-shell">
@@ -185,26 +265,35 @@ export default function Home() {
       </div>
 
       <main className="workspace">
-        {phase === "ready" || phase === "loading" || phase === "investigating"
-          ? null
-          : activeScenario && (
-              <IncidentHeader
-                phase={headerPhase}
-                service={incident?.affected_service ?? activeScenario.affected_service}
-                title={activeScenario.title}
-              />
-            )}
-
-        {inIncident || phase === "investigating" ? (
-          <StoryRail phase={phase} />
+        {inWorkspace && service ? (
+          <IncidentHeader
+            phase={headerPhase}
+            service={service}
+            title={title}
+            live={live?.streaming === true}
+            eventCount={live?.eventCount}
+          />
         ) : null}
+
+        {inWorkspace ? <StoryRail phase={phase} /> : null}
 
         {error ? (
           <div className="error-banner" role="alert">
             <p>{error}</p>
-            <button type="button" className="button-secondary" onClick={retry}>
-              Retry
-            </button>
+            <div className="error-actions">
+              <button type="button" className="button-secondary" onClick={retry}>
+                Retry
+              </button>
+              {phase !== "ready" ? (
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={resetToSelection}
+                >
+                  Back to incidents
+                </button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -252,7 +341,7 @@ export default function Home() {
                 onClick={() => void handleStart()}
                 disabled={busy || !selectedScenario}
               >
-                Start Investigation
+                Investigate
               </button>
               {selectedScenario ? (
                 <p className="start-hint">
@@ -263,62 +352,68 @@ export default function Home() {
           </section>
         ) : null}
 
-        {phase === "investigating" ? (
-          <p className="status-copy" aria-live="polite" aria-busy="true">
-            Investigating{" "}
-            {selectedScenario
-              ? humanizeServiceName(selectedScenario.affected_service)
-              : "service"}
-            …
-          </p>
-        ) : null}
-
-        {incident && inIncident ? (
+        {live && inWorkspace ? (
           <>
-            <div className="metric-grid">
-              <MetricCard
-                label="p95 latency"
-                value={formatLatency(incident.metrics.p95_latency_ms)}
-                hint={
-                  phase === "resolved" || phase === "rejected"
-                    ? "At detection"
-                    : undefined
+            {originalMetrics ? (
+              <div className="metric-grid">
+                <MetricCard
+                  label="p95 latency"
+                  value={formatLatency(originalMetrics.p95_latency_ms)}
+                  hint={
+                    phase === "resolved" || phase === "rejected"
+                      ? "At detection"
+                      : undefined
+                  }
+                  tone="incident"
+                />
+                <MetricCard
+                  label="Error rate"
+                  value={formatErrorRate(originalMetrics.error_rate_percent)}
+                  hint={
+                    phase === "resolved" || phase === "rejected"
+                      ? "At detection"
+                      : undefined
+                  }
+                  tone="incident"
+                />
+              </div>
+            ) : null}
+
+              <div
+                className={
+                  live.hypothesis
+                    ? "workspace-grid"
+                    : "workspace-grid workspace-grid-solo"
                 }
-                tone="incident"
+              >
+              <InvestigationTimeline
+                steps={timelineSteps(live)}
+                skills={live.selectedSkills}
+                symptomSummary={live.symptomSummary}
               />
-              <MetricCard
-                label="Error rate"
-                value={formatErrorRate(incident.metrics.error_rate_percent)}
-                hint={
-                  phase === "resolved" || phase === "rejected"
-                    ? "At detection"
-                    : undefined
-                }
-                tone="incident"
-              />
+              {live.hypothesis ? (
+                <HypothesisPanel hypothesis={live.hypothesis} />
+              ) : null}
             </div>
 
-            <div className="workspace-grid">
-              <InvestigationTimeline steps={incident.investigation_steps} />
-              <HypothesisPanel result={incident.hypothesis_result} />
-            </div>
-
-            {phase === "active" &&
-            incident.status === "approval_required" &&
-            incident.approval_request ? (
+            {phase === "active" && approvalRequest ? (
               <ApprovalPanel
-                approvalRequest={incident.approval_request}
-                recommendedAction={incident.recommended_action}
-                proposedVersion={incident.proposed_version}
+                approvalRequest={approvalRequest}
+                recommendedAction={
+                  live.hypothesis?.recommendedAction ?? approvalRequest.action
+                }
+                proposedVersion={approvalRequest.version}
                 busy={busy}
                 onApprove={() => void handleApproval(true)}
                 onReject={() => void handleApproval(false)}
               />
             ) : null}
 
-            {approval && (phase === "resolved" || phase === "rejected") ? (
+            {approval &&
+            originalMetrics &&
+            (phase === "resolved" || phase === "rejected") ? (
               <>
-                <RecoveryPanel original={incident.metrics} approval={approval} />
+                <RecoveryPanel original={originalMetrics} approval={approval} />
                 <div className="reset-row">
                   <button
                     type="button"
@@ -330,11 +425,39 @@ export default function Home() {
                 </div>
               </>
             ) : null}
+
+            {phase === "investigating" ? (
+              <div className="reset-row">
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={resetToSelection}
+                >
+                  Back to incidents
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
       </main>
     </div>
   );
+}
+
+function toApprovalRequest(
+  incidentId: string,
+  approval: NonNullable<LiveIncidentState["approval"]>,
+): ApprovalRequest {
+  return {
+    type: "approval_required",
+    proposal_id: approval.proposalId,
+    incident_id: incidentId,
+    action: approval.action,
+    service: approval.service,
+    version: approval.version,
+    risk_level: approval.riskLevel,
+    message: approval.message,
+  };
 }
 
 function StoryRail({ phase }: { phase: Phase }) {
@@ -345,7 +468,7 @@ function StoryRail({ phase }: { phase: Phase }) {
     {
       id: "broke",
       label: "Something broke",
-      done: investigated || phase === "investigating",
+      done: phase !== "ready" && phase !== "loading",
     },
     {
       id: "investigated",

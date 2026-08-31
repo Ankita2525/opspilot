@@ -29,6 +29,7 @@ Clock = Callable[[], datetime]
 def streamed_incident_response(
     *,
     scenario: IncidentScenario,
+    incident_id: str,
     begin_incident: BeginIncident,
     now: Clock | None = None,
 ) -> StreamingResponse:
@@ -39,7 +40,7 @@ def streamed_incident_response(
         loop.call_soon_threadsafe(queue.put_nowait, event)
 
     emitter = InvestigationEventEmitter(
-        incident_id=scenario.id,
+        incident_id=incident_id,
         publish=publish,
         now=now,
     )

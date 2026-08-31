@@ -21,6 +21,7 @@ from backend.app.api.schemas import (
 )
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
 from backend.app.events.emitter import InvestigationEventEmitter
+from backend.app.ids import new_incident_id
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
 from backend.app.observability.tracing import get_tracer
@@ -94,9 +95,10 @@ def create_app(
     def _begin_incident(
         scenario,
         events: InvestigationEventEmitter | None = None,
+        *,
+        incident_id: str,
     ):
         environment, coordinator = _runtime_for_scenario(scenario.id, events=events)
-        incident_id = scenario.id
         remediation_thread_id = incident_id
         proposal_id = f"{incident_id}-proposal"
         created_at = persistence.record_incident_created(
@@ -147,7 +149,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        started = _begin_incident(scenario)
+        started = _begin_incident(scenario, incident_id=new_incident_id())
         investigation = started.investigation
         metrics = investigation["metrics"]
         hypothesis_result = investigation["hypothesis_result"]
@@ -178,9 +180,13 @@ def create_app(
             scenario = get_scenario(body.scenario_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        incident_id = new_incident_id()
         return streamed_incident_response(
             scenario=scenario,
-            begin_incident=_begin_incident,
+            incident_id=incident_id,
+            begin_incident=lambda loaded, events, _incident_id=incident_id: (
+                _begin_incident(loaded, events, incident_id=_incident_id)
+            ),
             now=now,
         )
 
