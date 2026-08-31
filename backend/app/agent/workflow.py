@@ -28,6 +28,7 @@ class InvestigationWorkflow:
             "logs": [],
             "incident_context": None,
             "hypothesis_result": None,
+            "selected_skills": [],
             "completed_steps": [],
             "status": "in_progress",
         }
@@ -88,10 +89,12 @@ class InvestigationWorkflow:
             deployments=state["deployments"],
             logs=state["logs"],
         )
+        selected_skills = self._hypothesis_engine.select_skills(context)
         hypothesis_result = self._hypothesis_engine.analyze_context(context)
         return {
             "incident_context": context,
             "hypothesis_result": hypothesis_result,
+            "selected_skills": selected_skills,
             "completed_steps": [*state["completed_steps"], "generate_hypothesis"],
         }
 

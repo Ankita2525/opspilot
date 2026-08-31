@@ -48,6 +48,7 @@ class IncidentStartResponse(BaseModel):
     proposed_version: str | None
     approval_request: dict[str, Any] | None
     resolved: bool
+    selected_skills: list[str]
 
 
 class IncidentApprovalResponse(BaseModel):

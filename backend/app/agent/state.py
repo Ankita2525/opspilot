@@ -13,5 +13,6 @@ class InvestigationState(TypedDict):
     logs: list[LogResponse]
     incident_context: IncidentContext | None
     hypothesis_result: HypothesisResult | None
+    selected_skills: list[str]
     completed_steps: list[str]
     status: str

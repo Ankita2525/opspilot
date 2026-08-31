@@ -113,6 +113,7 @@ class _InvestigationStub:
                 )
             ],
             "incident_context": None,
+            "selected_skills": [],
             "hypothesis_result": HypothesisResult(
                 hypotheses=[
                     RootCauseHypothesis(

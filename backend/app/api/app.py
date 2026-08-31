@@ -119,6 +119,7 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
             proposed_version=started.proposed_version,
             approval_request=started.approval_request,
             resolved=False,
+            selected_skills=list(investigation.get("selected_skills") or []),
         )
 
     @app.post(

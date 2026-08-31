@@ -4,6 +4,9 @@ from backend.app.context.manager import ContextManager
 from backend.app.context.models import IncidentContext
 from backend.app.models.provider import ModelProvider
 from backend.app.observability.tracing import get_tracer
+from backend.app.skills.loader import SkillLoader
+from backend.app.skills.models import Skill
+from backend.app.skills.selector import SkillSelector
 from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
 
 
@@ -48,9 +51,16 @@ class HypothesisEngine:
         self,
         provider: ModelProvider,
         context_manager: ContextManager | None = None,
+        skill_selector: SkillSelector | None = None,
+        skill_loader: SkillLoader | None = None,
     ) -> None:
         self._provider = provider
         self._context_manager = context_manager or ContextManager()
+        self._skill_selector = skill_selector or SkillSelector()
+        self._skill_loader = skill_loader or SkillLoader()
+
+    def select_skills(self, context: IncidentContext) -> list[str]:
+        return self._skill_selector.select(context)
 
     def build_context(
         self,
@@ -87,10 +97,13 @@ class HypothesisEngine:
         return self.analyze_context(context)
 
     def analyze_context(self, context: IncidentContext) -> HypothesisResult:
-        user_prompt = _prompt_from_context(context)
+        skill_names = self.select_skills(context)
+        skills = [self._skill_loader.load(name) for name in skill_names]
+        user_prompt = _prompt_from_context(context, skills)
         with get_tracer().start_as_current_span("opspilot.hypothesis.generate") as span:
             span.set_attribute("opspilot.incident_id", context.incident_id)
             span.set_attribute("opspilot.service", context.affected_service)
+            span.set_attribute("opspilot.selected_skills", ",".join(skill_names))
             result = self._provider.generate_structured(
                 _SYSTEM_PROMPT,
                 user_prompt,
@@ -104,7 +117,7 @@ class HypothesisEngine:
             return result
 
 
-def _prompt_from_context(context: IncidentContext) -> str:
+def _prompt_from_context(context: IncidentContext, skills: list[Skill]) -> str:
     lines = [
         "Incident:",
         context.incident_id,
@@ -131,4 +144,27 @@ def _prompt_from_context(context: IncidentContext) -> str:
     else:
         lines.append("- none")
 
+    if skills:
+        lines.extend(_skill_guidance(skills))
+
     return "\n".join(lines)
+
+
+def _skill_guidance(skills: list[Skill]) -> list[str]:
+    lines = [
+        "",
+        "Relevant diagnostic skills:",
+        "Use these procedures to inspect the evidence. They do not identify a root cause.",
+    ]
+    for skill in skills:
+        lines.append("")
+        lines.append(f"Skill: {skill.name}")
+        lines.append("")
+        lines.append("Diagnostic guidance:")
+        for step in skill.diagnostic_steps:
+            lines.append(f"- {step}")
+        lines.append("")
+        lines.append("Safety guidance:")
+        for rule in skill.safety_rules:
+            lines.append(f"- {rule}")
+    return lines
