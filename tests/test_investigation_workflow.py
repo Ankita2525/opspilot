@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from backend.app.agent.hypotheses import HypothesisEngine, HypothesisResult
 from backend.app.agent.workflow import InvestigationWorkflow
 from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.schemas import LogResponse, MetricResponse
 from simulator.environment import SimulatedEnvironment
+from tests.fakes import FakeModelProvider
 
 SCENARIO_ID = "checkout-db-pool-regression"
 SERVICE = "checkout-api"
@@ -13,19 +15,27 @@ EXPECTED_STEPS = [
     "inspect_metrics",
     "inspect_deployments",
     "inspect_logs",
+    "generate_hypothesis",
     "complete_investigation",
 ]
 
 
-def _loaded_workflow() -> tuple[SimulatedEnvironment, InvestigationWorkflow]:
+def _loaded_workflow() -> tuple[
+    SimulatedEnvironment, InvestigationWorkflow, FakeModelProvider
+]:
     environment = SimulatedEnvironment()
     environment.load_scenario(SCENARIO_ID)
     tools = DiagnosticTools(environment)
-    return environment, InvestigationWorkflow(tools)
+    provider = FakeModelProvider()
+    workflow = InvestigationWorkflow(
+        tools=tools,
+        hypothesis_engine=HypothesisEngine(provider),
+    )
+    return environment, workflow, provider
 
 
 def test_workflow_completes_successfully() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -34,10 +44,12 @@ def test_workflow_completes_successfully() -> None:
     assert result["metrics"] is not None
     assert result["deployments"]
     assert result["logs"]
+    assert result["hypothesis_result"] is not None
+    assert result["status"] == "investigation_complete"
 
 
 def test_final_status_is_investigation_complete() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -45,7 +57,7 @@ def test_final_status_is_investigation_complete() -> None:
 
 
 def test_completed_steps_are_in_deterministic_order() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -53,7 +65,7 @@ def test_completed_steps_are_in_deterministic_order() -> None:
 
 
 def test_metrics_contain_p95_latency_1940() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -62,7 +74,7 @@ def test_metrics_contain_p95_latency_1940() -> None:
 
 
 def test_metrics_contain_error_rate_8_2() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -71,7 +83,7 @@ def test_metrics_contain_error_rate_8_2() -> None:
 
 
 def test_deployments_contain_v1_18_3() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -80,7 +92,7 @@ def test_deployments_contain_v1_18_3() -> None:
 
 
 def test_logs_contain_database_connection_pool_timeout() -> None:
-    _, workflow = _loaded_workflow()
+    _, workflow, _ = _loaded_workflow()
 
     result = workflow.run(INCIDENT_ID, SERVICE)
 
@@ -89,8 +101,71 @@ def test_logs_contain_database_connection_pool_timeout() -> None:
     assert "database connection pool timeout" in combined
 
 
+def test_hypothesis_result_is_populated() -> None:
+    _, workflow, _ = _loaded_workflow()
+
+    result = workflow.run(INCIDENT_ID, SERVICE)
+
+    assert isinstance(result["hypothesis_result"], HypothesisResult)
+    assert result["hypothesis_result"].hypotheses
+
+
+def test_top_cause_is_db_connection_pool_regression() -> None:
+    _, workflow, _ = _loaded_workflow()
+
+    result = workflow.run(INCIDENT_ID, SERVICE)
+    hypothesis = result["hypothesis_result"]
+    assert hypothesis is not None
+    highest = max(hypothesis.hypotheses, key=lambda item: item.confidence)
+    assert highest.cause == "db_connection_pool_regression"
+
+
+def test_hypothesis_confidence_equals_0_91() -> None:
+    _, workflow, _ = _loaded_workflow()
+
+    result = workflow.run(INCIDENT_ID, SERVICE)
+    hypothesis = result["hypothesis_result"]
+    assert hypothesis is not None
+    highest = max(hypothesis.hypotheses, key=lambda item: item.confidence)
+    assert highest.confidence == 0.91
+
+
+def test_recommended_next_action_is_rollback_deployment() -> None:
+    _, workflow, _ = _loaded_workflow()
+
+    result = workflow.run(INCIDENT_ID, SERVICE)
+    hypothesis = result["hypothesis_result"]
+    assert hypothesis is not None
+    assert hypothesis.recommended_next_action == "rollback_deployment"
+
+
+def test_hypothesis_receives_collected_evidence() -> None:
+    _, workflow, provider = _loaded_workflow()
+
+    workflow.run(INCIDENT_ID, SERVICE)
+    prompt = provider.recorded_prompt()
+
+    assert SERVICE in prompt
+    assert "1940" in prompt
+    assert "8.2" in prompt
+    assert BAD_VERSION in prompt
+    assert "database connection pool timeout" in prompt.lower()
+
+
+def test_hypothesis_prompt_does_not_leak_simulator_ground_truth() -> None:
+    _, workflow, provider = _loaded_workflow()
+
+    workflow.run(INCIDENT_ID, SERVICE)
+    prompt = provider.recorded_prompt()
+
+    assert "known_root_cause" not in prompt
+    assert "expected_remediation" not in prompt
+    assert "db_connection_pool_regression" not in prompt
+    assert "rollback_deployment" not in prompt
+
+
 def test_workflow_does_not_resolve_incident() -> None:
-    environment, workflow = _loaded_workflow()
+    environment, workflow, _ = _loaded_workflow()
 
     workflow.run(INCIDENT_ID, SERVICE)
 
@@ -98,7 +173,7 @@ def test_workflow_does_not_resolve_incident() -> None:
 
 
 def test_environment_remains_unchanged_after_investigation() -> None:
-    environment, workflow = _loaded_workflow()
+    environment, workflow, _ = _loaded_workflow()
     before_metrics = environment.query_metrics(SERVICE)
     before_logs = environment.get_logs(SERVICE)
     before_deployments = environment.get_recent_deployments(SERVICE)
