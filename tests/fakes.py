@@ -13,8 +13,10 @@ class FakeModelProvider:
     def __init__(
         self,
         recommended_next_action: str = "rollback_deployment",
+        cause: str = "db_connection_pool_regression",
     ) -> None:
         self.recommended_next_action = recommended_next_action
+        self.cause = cause
         self.system_prompts: list[str] = []
         self.user_prompts: list[str] = []
 
@@ -29,7 +31,7 @@ class FakeModelProvider:
         result = HypothesisResult(
             hypotheses=[
                 RootCauseHypothesis(
-                    cause="db_connection_pool_regression",
+                    cause=self.cause,
                     confidence=0.91,
                     evidence=[
                         EvidenceReference(
