@@ -5,14 +5,14 @@ from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricRes
 
 
 class EvidenceReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     source_type: str
     summary: str
 
 
 class RootCauseHypothesis(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     cause: str
     confidence: float = Field(ge=0, le=1)
@@ -20,7 +20,7 @@ class RootCauseHypothesis(BaseModel):
 
 
 class HypothesisResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     hypotheses: list[RootCauseHypothesis]
     recommended_next_action: str
