@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.models.provider import ModelProvider
+from backend.app.observability.tracing import get_tracer
 from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
 
 
@@ -59,11 +60,20 @@ class HypothesisEngine:
             deployments=deployments,
             logs=logs,
         )
-        return self._provider.generate_structured(
-            _SYSTEM_PROMPT,
-            user_prompt,
-            HypothesisResult,
-        )
+        with get_tracer().start_as_current_span("opspilot.hypothesis.generate") as span:
+            span.set_attribute("opspilot.incident_id", incident_id)
+            span.set_attribute("opspilot.service", affected_service)
+            result = self._provider.generate_structured(
+                _SYSTEM_PROMPT,
+                user_prompt,
+                HypothesisResult,
+            )
+            span.set_attribute("opspilot.hypothesis_count", len(result.hypotheses))
+            span.set_attribute(
+                "opspilot.recommended_action",
+                result.recommended_next_action,
+            )
+            return result
 
 
 def _build_user_prompt(

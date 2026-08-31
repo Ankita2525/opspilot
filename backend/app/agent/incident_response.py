@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow
 from backend.app.agent.workflow import InvestigationWorkflow
+from backend.app.observability.tracing import get_tracer
 from backend.app.tools.remediation import ROLLBACK_ACTION
 from backend.app.tools.schemas import DeploymentResponse
 from langgraph.types import Interrupt
@@ -43,6 +44,33 @@ class IncidentResponseCoordinator:
         self._remediation_workflow = remediation_workflow
 
     def start(
+        self,
+        *,
+        incident_id: str,
+        affected_service: str,
+        remediation_thread_id: str,
+        proposal_id: str,
+    ) -> IncidentResponseStartResult:
+        with get_tracer().start_as_current_span(
+            "opspilot.incident_response.start"
+        ) as span:
+            span.set_attribute("opspilot.incident_id", incident_id)
+            span.set_attribute("opspilot.service", affected_service)
+            result = self._start_incident(
+                incident_id=incident_id,
+                affected_service=affected_service,
+                remediation_thread_id=remediation_thread_id,
+                proposal_id=proposal_id,
+            )
+            span.set_attribute("opspilot.status", result.status)
+            if result.recommended_action is not None:
+                span.set_attribute(
+                    "opspilot.recommended_action",
+                    result.recommended_action,
+                )
+            return result
+
+    def _start_incident(
         self,
         *,
         incident_id: str,

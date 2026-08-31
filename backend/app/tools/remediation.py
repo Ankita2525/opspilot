@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 
+from backend.app.observability.tracing import get_tracer
 from backend.app.safety.approvals import ApprovalService
 from backend.app.safety.models import ApprovalStatus, RemediationProposal, RiskLevel
 from backend.app.safety.policy import ActionPolicy
@@ -36,32 +37,42 @@ class RemediationTools:
         service: str,
         version: str,
     ) -> RemediationProposal:
-        risk_level = self._policy.classify(ROLLBACK_ACTION)
-        proposal = RemediationProposal(
-            proposal_id=proposal_id,
-            incident_id=incident_id,
-            action=ROLLBACK_ACTION,
-            service=service,
-            parameters={"version": version},
-            risk_level=risk_level,
-            approval_status=ApprovalStatus.PENDING,
-        )
-        return self._approvals.submit(proposal)
+        with get_tracer().start_as_current_span("opspilot.remediation.propose") as span:
+            span.set_attribute("opspilot.incident_id", incident_id)
+            span.set_attribute("opspilot.service", service)
+            span.set_attribute("opspilot.action", ROLLBACK_ACTION)
+            span.set_attribute("opspilot.risk_level", "high_risk")
+            risk_level = self._policy.classify(ROLLBACK_ACTION)
+            proposal = RemediationProposal(
+                proposal_id=proposal_id,
+                incident_id=incident_id,
+                action=ROLLBACK_ACTION,
+                service=service,
+                parameters={"version": version},
+                risk_level=risk_level,
+                approval_status=ApprovalStatus.PENDING,
+            )
+            return self._approvals.submit(proposal)
 
     def execute_rollback(self, proposal_id: str) -> RollbackExecutionResult:
-        proposal = self._approvals.get(proposal_id)
-        if proposal.action != ROLLBACK_ACTION:
-            raise PermissionError("Proposal action is not rollback_deployment.")
-        if proposal.risk_level != RiskLevel.HIGH_RISK:
-            raise PermissionError("Proposal is not classified as HIGH_RISK.")
-        if proposal.approval_status != ApprovalStatus.APPROVED:
-            raise PermissionError("Rollback has not been approved.")
+        with get_tracer().start_as_current_span("opspilot.remediation.execute") as span:
+            span.set_attribute("opspilot.action", ROLLBACK_ACTION)
+            span.set_attribute("opspilot.proposal_id", proposal_id)
+            proposal = self._approvals.get(proposal_id)
+            if proposal.action != ROLLBACK_ACTION:
+                raise PermissionError("Proposal action is not rollback_deployment.")
+            if proposal.risk_level != RiskLevel.HIGH_RISK:
+                raise PermissionError("Proposal is not classified as HIGH_RISK.")
+            if proposal.approval_status != ApprovalStatus.APPROVED:
+                raise PermissionError("Rollback has not been approved.")
 
-        version = proposal.parameters["version"]
-        self._environment.rollback_deployment(proposal.service, version)
-        return RollbackExecutionResult(
-            success=True,
-            proposal_id=proposal.proposal_id,
-            service=proposal.service,
-            version=version,
-        )
+            version = proposal.parameters["version"]
+            self._environment.rollback_deployment(proposal.service, version)
+            result = RollbackExecutionResult(
+                success=True,
+                proposal_id=proposal.proposal_id,
+                service=proposal.service,
+                version=version,
+            )
+            span.set_attribute("opspilot.execution_success", True)
+            return result

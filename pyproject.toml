@@ -7,6 +7,8 @@ dependencies = [
     "groq>=1.7.0",
     "langgraph>=1.2.11",
     "mcp[cli]>=2,<3",
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
     "pydantic>=2.13.5",
 ]
 
