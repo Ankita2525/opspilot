@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agent.hypotheses import HypothesisEngine
 from backend.app.agent.incident_response import IncidentResponseCoordinator
@@ -29,6 +30,15 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
     )
     store = IncidentSessionStore()
     app = FastAPI(title="OpsPilot")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.provider = resolved_provider
     app.state.store = store
 
