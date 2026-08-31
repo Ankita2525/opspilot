@@ -127,7 +127,10 @@ class _InvestigationStub:
                         ],
                     )
                 ],
-                recommended_next_action="rollback_deployment",
+                recommended_action="rollback_deployment",
+                recommendation_summary=(
+                    "Rolling back the deployment is the safest currently available remediation."
+                ),
                 reasoning_summary="Rollback is recommended from supplied evidence.",
             ),
             "completed_steps": [
@@ -314,19 +317,19 @@ def test_rejected_flow_creates_no_rollback_audit_event() -> None:
 
 
 def test_unsupported_recommendation_status() -> None:
-    provider = FakeModelProvider(recommended_next_action="increase_connection_pool")
+    provider = FakeModelProvider(recommended_next_action="no_supported_action")
     _, _, _, coordinator = _stack(provider=provider)
 
     started = _start(coordinator)
 
-    assert started.status == "unsupported_recommendation"
-    assert started.recommended_action == "increase_connection_pool"
+    assert started.status == "investigation_complete"
+    assert started.recommended_action == "no_supported_action"
     assert started.proposed_version is None
     assert started.approval_request is None
 
 
 def test_unsupported_recommendation_creates_no_proposal() -> None:
-    provider = FakeModelProvider(recommended_next_action="increase_connection_pool")
+    provider = FakeModelProvider(recommended_next_action="no_supported_action")
     _, approvals, _, coordinator = _stack(provider=provider)
 
     _start(coordinator)
@@ -336,7 +339,7 @@ def test_unsupported_recommendation_creates_no_proposal() -> None:
 
 
 def test_unsupported_recommendation_does_not_mutate_environment() -> None:
-    provider = FakeModelProvider(recommended_next_action="increase_connection_pool")
+    provider = FakeModelProvider(recommended_next_action="no_supported_action")
     environment, _, _, coordinator = _stack(provider=provider)
 
     _start(coordinator)

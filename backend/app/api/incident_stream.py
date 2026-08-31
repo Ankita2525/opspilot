@@ -121,6 +121,12 @@ def _execute_streamed_incident(
         return
     emitter.emit(
         InvestigationEventType.INCIDENT_COMPLETED,
-        message="Investigation completed.",
-        data={"status": started.status},
+        message=(
+            "Investigation complete. No supported automated remediation was selected. "
+            "Production remains unchanged."
+        ),
+        data={
+            "status": started.status,
+            "recommended_action": started.recommended_action,
+        },
     )

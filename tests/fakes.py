@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from backend.app.agent.hypotheses import (
     EvidenceReference,
     HypothesisResult,
+    RecommendedAction,
     RootCauseHypothesis,
 )
 
@@ -12,7 +13,7 @@ class FakeModelProvider:
 
     def __init__(
         self,
-        recommended_next_action: str | None = None,
+        recommended_next_action: RecommendedAction | str | None = None,
         cause: str | None = None,
     ) -> None:
         self.recommended_next_action = recommended_next_action
@@ -29,6 +30,9 @@ class FakeModelProvider:
         self.system_prompts.append(system_prompt)
         self.user_prompts.append(user_prompt)
         diagnosis = _diagnosis_for_prompt(user_prompt)
+        selected_action = (
+            self.recommended_next_action or diagnosis.recommended_action
+        )
         result = HypothesisResult(
             hypotheses=[
                 RootCauseHypothesis(
@@ -37,9 +41,8 @@ class FakeModelProvider:
                     evidence=list(diagnosis.evidence),
                 )
             ],
-            recommended_next_action=(
-                self.recommended_next_action or diagnosis.recommended_next_action
-            ),
+            recommended_action=selected_action,
+            recommendation_summary=diagnosis.recommendation_summary,
             reasoning_summary=diagnosis.reasoning_summary,
         )
         return response_model.model_validate(result.model_dump())
@@ -54,14 +57,16 @@ class _Diagnosis:
         *,
         cause: str,
         confidence: float,
-        recommended_next_action: str,
+        recommended_action: RecommendedAction,
         evidence: list[EvidenceReference],
+        recommendation_summary: str,
         reasoning_summary: str,
     ) -> None:
         self.cause = cause
         self.confidence = confidence
-        self.recommended_next_action = recommended_next_action
+        self.recommended_action = recommended_action
         self.evidence = evidence
+        self.recommendation_summary = recommendation_summary
         self.reasoning_summary = reasoning_summary
 
 
@@ -71,7 +76,7 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
         return _Diagnosis(
             cause="auth_token_validation_regression",
             confidence=0.93,
-            recommended_next_action="rollback_deployment",
+            recommended_action=RecommendedAction.ROLLBACK_DEPLOYMENT,
             evidence=[
                 EvidenceReference(
                     source_type="deployment",
@@ -86,6 +91,10 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
                     summary="authentication failures are elevated",
                 ),
             ],
+            recommendation_summary=(
+                "Token validation failures followed deployment v2.7.1. "
+                "Rolling back the deployment is the safest currently available remediation."
+            ),
             reasoning_summary=(
                 "Evidence strongly correlates the recent deployment with "
                 "token validation failures and authentication degradation."
@@ -95,7 +104,7 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
         return _Diagnosis(
             cause="payment_provider_timeout_regression",
             confidence=0.90,
-            recommended_next_action="rollback_deployment",
+            recommended_action=RecommendedAction.ROLLBACK_DEPLOYMENT,
             evidence=[
                 EvidenceReference(
                     source_type="deployment",
@@ -110,6 +119,10 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
                     summary="payments latency and error rate are elevated",
                 ),
             ],
+            recommendation_summary=(
+                "Payment provider timeouts followed deployment v3.4.2. "
+                "Rolling back the deployment is the safest currently available remediation."
+            ),
             reasoning_summary=(
                 "Evidence strongly correlates the recent deployment with "
                 "upstream payment timeouts and payments degradation."
@@ -118,7 +131,7 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
     return _Diagnosis(
         cause="db_connection_pool_regression",
         confidence=0.91,
-        recommended_next_action="rollback_deployment",
+        recommended_action=RecommendedAction.ROLLBACK_DEPLOYMENT,
         evidence=[
             EvidenceReference(
                 source_type="deployment",
@@ -133,6 +146,10 @@ def _diagnosis_for_prompt(user_prompt: str) -> _Diagnosis:
                 summary="checkout latency and error rate are elevated",
             ),
         ],
+        recommendation_summary=(
+            "Connection pool exhaustion followed deployment v1.18.3. "
+            "Rolling back the deployment is the safest currently available remediation."
+        ),
         reasoning_summary=(
             "Evidence strongly correlates the recent deployment with "
             "database pool failures and checkout degradation."

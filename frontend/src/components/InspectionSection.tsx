@@ -26,6 +26,7 @@ type InspectionTab = "evidence" | "audit" | "evaluation";
 type LifecyclePhase =
   | "investigating"
   | "active"
+  | "complete"
   | "resolved"
   | "rejected"
   | "failed";
@@ -66,6 +67,7 @@ function auditRefreshKey(
 ): string {
   if (
     lifecyclePhase === "active" ||
+    lifecyclePhase === "complete" ||
     lifecyclePhase === "resolved" ||
     lifecyclePhase === "rejected"
   ) {
@@ -83,6 +85,7 @@ export function InspectionSection({
   const [tab, setTab] = useState<InspectionTab>("evidence");
   const prefetchAudit =
     lifecyclePhase === "active" ||
+    lifecyclePhase === "complete" ||
     lifecyclePhase === "resolved" ||
     lifecyclePhase === "rejected";
   const loadAudit = Boolean(incidentId) && (prefetchAudit || tab === "audit");

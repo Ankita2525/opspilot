@@ -3,6 +3,7 @@ import { humanizeServiceName } from "@/lib/labels";
 type IncidentPhase =
   | "investigating"
   | "active"
+  | "complete"
   | "resolved"
   | "rejected"
   | "failed";
@@ -26,6 +27,11 @@ const PHASE_COPY: Record<
   active: {
     eyebrow: "Awaiting human approval",
     summary: "High-risk rollback is ready. Production is unchanged until you decide.",
+  },
+  complete: {
+    eyebrow: "Investigation complete",
+    summary:
+      "Investigation complete. No supported automated remediation was selected. Production remains unchanged.",
   },
   resolved: {
     eyebrow: "Incident resolved",

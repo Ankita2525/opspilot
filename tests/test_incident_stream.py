@@ -170,6 +170,29 @@ def test_checkout_ends_at_approval_required() -> None:
     assert "incident_completed" not in _event_types(events)
 
 
+def test_no_supported_action_stream_reaches_terminal_completed_event() -> None:
+    client, repo = _client(
+        provider=FakeModelProvider(recommended_next_action="no_supported_action")
+    )
+    events = _parse_sse(_stream(client).text)
+    terminal = events[-1]
+    incident_id = terminal["incident_id"]
+
+    assert terminal["event_type"] == "incident_completed"
+    assert terminal["data"]["status"] == "investigation_complete"
+    assert terminal["data"]["recommended_action"] == "no_supported_action"
+    assert "approval_required" not in _event_types(events)
+    stored = repo.get_incident(incident_id)
+    assert stored is not None
+    assert stored.status == "investigation_complete"
+    assert stored.recommended_action == "no_supported_action"
+    assert stored.resolved is False
+    assert repo.list_approvals(incident_id) == []
+    assert not any(
+        item.event_type == "remediation_executed" for item in repo.list_audit_events(incident_id)
+    )
+
+
 def test_auth_selects_authentication_skills() -> None:
     client, _ = _client()
     events = _parse_sse(_stream(client, AUTH_ID).text)

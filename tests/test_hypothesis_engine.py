@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from backend.app.agent.hypotheses import (
     HypothesisEngine,
     HypothesisResult,
+    RecommendedAction,
     RootCauseHypothesis,
 )
 from backend.app.tools.diagnostics import DiagnosticTools
@@ -110,7 +111,7 @@ def test_prompt_does_not_include_expected_remediation() -> None:
     prompt = provider.recorded_prompt()
 
     assert "expected_remediation" not in prompt
-    assert "rollback_deployment" not in prompt
+    assert "rollback_deployment" not in provider.user_prompts[0]
 
 
 def test_prompt_is_built_from_incident_context() -> None:
@@ -125,6 +126,34 @@ def test_prompt_is_built_from_incident_context() -> None:
     assert "Recent changes:" in prompt
     assert "Ranked evidence:" in prompt
     assert "ERROR:" in prompt
+
+
+def test_recommended_action_is_constrained_enum() -> None:
+    _, _, result = _analyze()
+
+    assert result.recommended_action == RecommendedAction.ROLLBACK_DEPLOYMENT
+    assert result.recommendation_summary
+
+
+def test_arbitrary_action_string_fails_schema_validation() -> None:
+    with pytest.raises(ValidationError):
+        HypothesisResult(
+            hypotheses=[
+                RootCauseHypothesis(cause="x", confidence=0.5, evidence=[]),
+            ],
+            recommended_action="increase_database_pool",
+            recommendation_summary="Increase the pool.",
+            reasoning_summary="Model proposed an unsupported tool.",
+        )
+
+
+def test_system_prompt_states_executable_action_vocabulary() -> None:
+    _, provider, _ = _analyze()
+    system = provider.system_prompts[0]
+
+    assert "rollback_deployment" in system
+    assert "no_supported_action" in system
+    assert "expected_remediation" not in system
 
 
 def test_analysis_does_not_mutate_or_resolve_incident() -> None:

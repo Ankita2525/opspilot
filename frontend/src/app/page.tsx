@@ -31,6 +31,7 @@ type Phase =
   | "ready"
   | "investigating"
   | "active"
+  | "complete"
   | "resolved"
   | "rejected"
   | "failed";
@@ -155,6 +156,10 @@ export default function Home() {
             setPhase("active");
             setBusy(false);
           }
+          if (event.event_type === "incident_completed") {
+            setPhase("complete");
+            setBusy(false);
+          }
           if (event.event_type === "incident_failed") {
             setError(STREAM_FAILURE_MESSAGE);
             setPhase("failed");
@@ -237,10 +242,17 @@ export default function Home() {
   const inWorkspace =
     phase === "investigating" ||
     phase === "active" ||
+    phase === "complete" ||
     phase === "resolved" ||
     phase === "rejected" ||
     phase === "failed";
-  const headerPhase: "investigating" | "active" | "resolved" | "rejected" | "failed" =
+  const headerPhase:
+    | "investigating"
+    | "active"
+    | "complete"
+    | "resolved"
+    | "rejected"
+    | "failed" =
     phase === "ready" || phase === "loading" ? "investigating" : phase;
   const service =
     live?.affectedService ??
@@ -361,7 +373,9 @@ export default function Home() {
                   label="p95 latency"
                   value={formatLatency(originalMetrics.p95_latency_ms)}
                   hint={
-                    phase === "resolved" || phase === "rejected"
+                    phase === "resolved" ||
+                    phase === "rejected" ||
+                    phase === "complete"
                       ? "At detection"
                       : undefined
                   }
@@ -371,7 +385,9 @@ export default function Home() {
                   label="Error rate"
                   value={formatErrorRate(originalMetrics.error_rate_percent)}
                   hint={
-                    phase === "resolved" || phase === "rejected"
+                    phase === "resolved" ||
+                    phase === "rejected" ||
+                    phase === "complete"
                       ? "At detection"
                       : undefined
                   }
@@ -423,7 +439,7 @@ export default function Home() {
               lifecyclePhase={headerPhase}
             />
 
-            {phase === "resolved" || phase === "rejected" ? (
+            {phase === "resolved" || phase === "rejected" || phase === "complete" ? (
               <div className="reset-row">
                 <button
                   type="button"
@@ -471,8 +487,11 @@ function toApprovalRequest(
 
 function StoryRail({ phase }: { phase: Phase }) {
   const investigated =
-    phase === "active" || phase === "resolved" || phase === "rejected";
-  const decided = phase === "resolved" || phase === "rejected";
+    phase === "active" ||
+    phase === "complete" ||
+    phase === "resolved" ||
+    phase === "rejected";
+  const decided = phase === "resolved" || phase === "rejected" || phase === "complete";
   const steps = [
     {
       id: "broke",
@@ -487,11 +506,14 @@ function StoryRail({ phase }: { phase: Phase }) {
     {
       id: "approval",
       label: "Human approval",
-      done: decided,
+      done: phase === "resolved" || phase === "rejected",
     },
     {
       id: "outcome",
-      label: phase === "rejected" ? "Unchanged" : "Service recovers",
+      label:
+        phase === "rejected" || phase === "complete"
+          ? "Unchanged"
+          : "Service recovers",
       done: decided,
     },
   ];

@@ -55,7 +55,7 @@ class UnsupportedRecommendationProvider(FakeModelProvider):
     """Recommends an unsupported production action that must not execute."""
 
     def __init__(self) -> None:
-        super().__init__(recommended_next_action="restart_production")
+        super().__init__(recommended_next_action="no_supported_action")
 
 
 def _run(
@@ -235,7 +235,7 @@ def test_unsupported_recommendation_does_not_execute() -> None:
     assert result.approval_compliance_rate == 1.0
     assert all(item.approval_required is False for item in result.scenario_results)
     assert all(
-        item.recommended_action == "restart_production"
+        item.recommended_action == "no_supported_action"
         for item in result.scenario_results
     )
     _assert_rates_in_unit_interval(result)

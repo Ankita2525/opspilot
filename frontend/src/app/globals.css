@@ -116,6 +116,10 @@ body {
   border-left-color: var(--muted);
 }
 
+.incident-header-complete {
+  border-left-color: var(--investigate);
+}
+
 .incident-header-resolved {
   border-left-color: var(--success);
 }
@@ -135,6 +139,10 @@ body {
 
 .incident-header-active .incident-kicker {
   color: var(--incident);
+}
+
+.incident-header-complete .incident-kicker {
+  color: var(--investigate);
 }
 
 .incident-header-resolved .incident-kicker {
@@ -581,9 +589,15 @@ body {
   font-weight: 600;
 }
 
-.hypothesis-summary {
-  margin: 0 0 1rem;
+.hypothesis-summary,
+.hypothesis-recommendation,
+.hypothesis-outcome {
+  margin: 0 0 0.7rem;
   line-height: 1.55;
+}
+
+.hypothesis-outcome {
+  color: var(--muted);
 }
 
 .evidence-heading {

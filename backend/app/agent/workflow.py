@@ -209,7 +209,10 @@ def _context_payload(context: IncidentContext) -> dict:
 
 
 def _hypothesis_payload(result: HypothesisResult) -> dict:
-    payload: dict = {"recommended_action": result.recommended_next_action}
+    payload: dict = {
+        "recommended_action": result.recommended_action.value,
+        "recommendation_summary": result.recommendation_summary,
+    }
     if not result.hypotheses:
         return payload
     top = max(result.hypotheses, key=lambda item: item.confidence)

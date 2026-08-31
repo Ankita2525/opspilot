@@ -90,12 +90,12 @@ def test_correct_rollback_recommendation_evaluates_true() -> None:
 
 def test_wrong_recommendation_evaluates_false() -> None:
     _, scenario, _, investigation = _investigated(
-        recommended_next_action="increase_connection_pool",
+        recommended_next_action="no_supported_action",
     )
 
     result = _evaluate(scenario, investigation)
 
-    assert result.recommended_action == "increase_connection_pool"
+    assert result.recommended_action == "no_supported_action"
     assert result.recommended_action_correct is False
 
 

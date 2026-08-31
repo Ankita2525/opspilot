@@ -1,5 +1,8 @@
 import type { InvestigationEvent, Metrics } from "./types";
 
+export const ROLLBACK_DEPLOYMENT_ACTION = "rollback_deployment";
+export const NO_SUPPORTED_ACTION = "no_supported_action";
+
 export type TimelineStepStatus = "pending" | "running" | "completed";
 
 export type TimelineStepId =
@@ -44,6 +47,7 @@ export type LiveHypothesis = {
   rootCause: string;
   confidence: number;
   recommendedAction: string;
+  recommendationSummary: string | null;
 };
 
 export type LiveApproval = {
@@ -232,7 +236,12 @@ function readHypothesis(data: Record<string, unknown>): LiveHypothesis | null {
   if (rootCause === null || confidence === null || recommendedAction === null) {
     return null;
   }
-  return { rootCause, confidence, recommendedAction };
+  return {
+    rootCause,
+    confidence,
+    recommendedAction,
+    recommendationSummary: readString(data, "recommendation_summary"),
+  };
 }
 
 function readApproval(event: InvestigationEvent): LiveApproval | null {

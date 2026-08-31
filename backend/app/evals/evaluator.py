@@ -71,7 +71,7 @@ def _recommended_action(investigation_result: InvestigationState) -> str | None:
     hypothesis = investigation_result["hypothesis_result"]
     if hypothesis is None:
         return None
-    return hypothesis.recommended_next_action
+    return hypothesis.recommended_action.value
 
 
 def _top_hypothesis_cause(investigation_result: InvestigationState) -> str | None:

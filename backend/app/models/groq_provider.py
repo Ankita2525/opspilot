@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
+from typing import Any
 
 from groq import Groq
 from pydantic import BaseModel
@@ -49,7 +51,7 @@ class GroqModelProvider:
                 "json_schema": {
                     "name": _schema_name(response_model),
                     "strict": True,
-                    "schema": response_model.model_json_schema(),
+                    "schema": groq_strict_schema(response_model.model_json_schema()),
                 },
             },
             include_reasoning=False,
@@ -58,6 +60,61 @@ class GroqModelProvider:
         if not content:
             raise RuntimeError("Groq returned empty structured output.")
         return response_model.model_validate(json.loads(content))
+
+
+def groq_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a Groq-strict copy of a JSON Schema object.
+
+    Groq structured outputs require every object node to set
+    additionalProperties=false and to list every property in required.
+    Optional/nullable fields stay required and keep their null union.
+    """
+
+    cloned = copy.deepcopy(schema)
+    _close_object_nodes(cloned)
+    return cloned
+
+
+def _close_object_nodes(node: object) -> None:
+    if isinstance(node, list):
+        for item in node:
+            _close_object_nodes(item)
+        return
+    if not isinstance(node, dict):
+        return
+
+    for key, value in node.items():
+        if key == "additionalProperties" and not isinstance(value, dict):
+            continue
+        _close_object_nodes(value)
+
+    if not _is_json_schema_object(node):
+        return
+
+    node["additionalProperties"] = False
+    properties = node.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return
+    required = node.get("required")
+    if not isinstance(required, list):
+        required = []
+    else:
+        required = [item for item in required if item in properties]
+    for name in properties:
+        if name not in required:
+            required.append(name)
+    node["required"] = required
+
+
+def _is_json_schema_object(node: dict[str, Any]) -> bool:
+    if "$ref" in node and "properties" not in node and "type" not in node:
+        return False
+    schema_type = node.get("type")
+    if schema_type == "object":
+        return True
+    if isinstance(schema_type, list) and "object" in schema_type:
+        return True
+    return isinstance(node.get("properties"), dict)
 
 
 def _schema_name(response_model: type[BaseModel]) -> str:

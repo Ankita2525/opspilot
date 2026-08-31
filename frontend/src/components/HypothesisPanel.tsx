@@ -1,11 +1,15 @@
 import { formatConfidence, humanizeIdentifier } from "@/lib/labels";
-import type { LiveHypothesis } from "@/lib/live-incident";
+import {
+  NO_SUPPORTED_ACTION,
+  type LiveHypothesis,
+} from "@/lib/live-incident";
 
 type HypothesisPanelProps = {
   hypothesis: LiveHypothesis;
 };
 
 export function HypothesisPanel({ hypothesis }: HypothesisPanelProps) {
+  const unsupported = hypothesis.recommendedAction === NO_SUPPORTED_ACTION;
   return (
     <section className="panel" aria-labelledby="hypothesis-heading">
       <h2 id="hypothesis-heading">Root cause</h2>
@@ -18,6 +22,17 @@ export function HypothesisPanel({ hypothesis }: HypothesisPanelProps) {
       <p className="hypothesis-summary">
         Recommended action: {humanizeIdentifier(hypothesis.recommendedAction)}
       </p>
+      {hypothesis.recommendationSummary ? (
+        <p className="hypothesis-recommendation">
+          {hypothesis.recommendationSummary}
+        </p>
+      ) : null}
+      {unsupported ? (
+        <p className="hypothesis-outcome">
+          Investigation complete. No supported automated remediation was
+          selected. Production remains unchanged.
+        </p>
+      ) : null}
     </section>
   );
 }

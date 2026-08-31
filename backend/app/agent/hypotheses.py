@@ -1,3 +1,5 @@
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.context.manager import ContextManager
@@ -8,6 +10,16 @@ from backend.app.skills.loader import SkillLoader
 from backend.app.skills.models import Skill
 from backend.app.skills.selector import SkillSelector
 from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
+
+
+class RecommendedAction(str, Enum):
+    """Machine-executable recommendation vocabulary.
+
+    Only values OpsPilot can actually perform or explicitly decline.
+    """
+
+    ROLLBACK_DEPLOYMENT = "rollback_deployment"
+    NO_SUPPORTED_ACTION = "no_supported_action"
 
 
 class EvidenceReference(BaseModel):
@@ -29,7 +41,8 @@ class HypothesisResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     hypotheses: list[RootCauseHypothesis]
-    recommended_next_action: str
+    recommended_action: RecommendedAction
+    recommendation_summary: str
     reasoning_summary: str
 
 
@@ -40,7 +53,18 @@ Do not invent facts.
 Rank likely root causes from most to least likely.
 Cite evidence summaries for each hypothesis.
 Produce a concise reasoning_summary. Do not include chain-of-thought or hidden reasoning.
-Recommend the next investigation or remediation action.
+
+OpsPilot has a fixed vocabulary of machine-executable remediation actions.
+recommended_action MUST be exactly one of:
+- rollback_deployment
+- no_supported_action
+
+Choose rollback_deployment only when the supplied evidence supports reverting a recent deployment as the safe remediation.
+Otherwise choose no_supported_action.
+Do not invent tools or actions that are not in this vocabulary.
+
+recommendation_summary is operator-facing prose. It may describe further investigation an operator could do.
+It must not be used as a machine-executable action.
 """
 
 
@@ -112,7 +136,7 @@ class HypothesisEngine:
             span.set_attribute("opspilot.hypothesis_count", len(result.hypotheses))
             span.set_attribute(
                 "opspilot.recommended_action",
-                result.recommended_next_action,
+                result.recommended_action.value,
             )
             return result
 

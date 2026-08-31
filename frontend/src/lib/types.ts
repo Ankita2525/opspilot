@@ -48,7 +48,8 @@ export type Hypothesis = {
 
 export type HypothesisResult = {
   hypotheses: Hypothesis[];
-  recommended_next_action: string;
+  recommended_action: string;
+  recommendation_summary: string;
   reasoning_summary: string;
 };
 

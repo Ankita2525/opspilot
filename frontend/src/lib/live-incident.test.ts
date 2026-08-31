@@ -115,3 +115,42 @@ test("context_built stores bounded evidence in backend order", () => {
   );
   assert.equal(state.evidence[0]?.summary, "Database connection pool timeout");
 });
+
+test("incident_completed is a terminal investigation without approval", () => {
+  let state = createLiveIncidentState();
+  state = applyInvestigationEvent(
+    state,
+    event({
+      event_type: "hypothesis_generated",
+      sequence: 1,
+      data: {
+        root_cause: "db_connection_pool_regression",
+        confidence: 0.8,
+        recommended_action: "no_supported_action",
+        recommendation_summary:
+          "Connection pool exhaustion followed deployment v1.18.3.",
+      },
+    }),
+  );
+  state = applyInvestigationEvent(
+    state,
+    event({
+      event_type: "incident_completed",
+      sequence: 2,
+      data: {
+        status: "investigation_complete",
+        recommended_action: "no_supported_action",
+      },
+    }),
+  );
+
+  assert.equal(state.streaming, false);
+  assert.equal(state.investigationComplete, true);
+  assert.equal(state.failed, false);
+  assert.equal(state.approval, null);
+  assert.equal(state.hypothesis?.recommendedAction, "no_supported_action");
+  assert.equal(
+    state.hypothesis?.recommendationSummary,
+    "Connection pool exhaustion followed deployment v1.18.3.",
+  );
+});

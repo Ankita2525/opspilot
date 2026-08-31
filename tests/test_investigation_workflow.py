@@ -136,7 +136,7 @@ def test_recommended_next_action_is_rollback_deployment() -> None:
     result = workflow.run(INCIDENT_ID, SERVICE)
     hypothesis = result["hypothesis_result"]
     assert hypothesis is not None
-    assert hypothesis.recommended_next_action == "rollback_deployment"
+    assert hypothesis.recommended_action == "rollback_deployment"
 
 
 def test_hypothesis_receives_collected_evidence() -> None:
@@ -163,7 +163,7 @@ def test_hypothesis_prompt_does_not_leak_simulator_ground_truth() -> None:
     assert "known_root_cause" not in prompt
     assert "expected_remediation" not in prompt
     assert "db_connection_pool_regression" not in prompt
-    assert "rollback_deployment" not in prompt
+    assert "rollback_deployment" not in provider.user_prompts[0]
 
 
 def test_workflow_does_not_resolve_incident() -> None:

@@ -83,14 +83,14 @@ class IncidentResponseCoordinator:
         if hypothesis is None:
             raise ValueError("Investigation completed without a hypothesis result.")
 
-        recommended_action = hypothesis.recommended_next_action
-        if recommended_action != ROLLBACK_ACTION:
+        recommended_action = hypothesis.recommended_action
+        if recommended_action.value != ROLLBACK_ACTION:
             return IncidentResponseStartResult(
                 incident_id=incident_id,
                 affected_service=affected_service,
-                status="unsupported_recommendation",
+                status="investigation_complete",
                 investigation=dict(investigation),
-                recommended_action=recommended_action,
+                recommended_action=recommended_action.value,
                 proposed_version=None,
                 approval_request=None,
             )
@@ -105,7 +105,7 @@ class IncidentResponseCoordinator:
                 affected_service=affected_service,
                 status="insufficient_evidence",
                 investigation=dict(investigation),
-                recommended_action=recommended_action,
+                recommended_action=recommended_action.value,
                 proposed_version=None,
                 approval_request=None,
             )
@@ -122,7 +122,7 @@ class IncidentResponseCoordinator:
             affected_service=affected_service,
             status="approval_required",
             investigation=dict(investigation),
-            recommended_action=recommended_action,
+            recommended_action=recommended_action.value,
             proposed_version=proposed_version,
             approval_request=_interrupt_payload(remediation_result),
         )

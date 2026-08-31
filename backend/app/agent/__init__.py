@@ -1,4 +1,4 @@
-from backend.app.agent.hypotheses import HypothesisEngine, HypothesisResult
+from backend.app.agent.hypotheses import HypothesisEngine, HypothesisResult, RecommendedAction
 from backend.app.agent.incident_response import IncidentResponseCoordinator
 from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow
 from backend.app.agent.state import InvestigationState
@@ -10,5 +10,6 @@ __all__ = [
     "IncidentResponseCoordinator",
     "InvestigationState",
     "InvestigationWorkflow",
+    "RecommendedAction",
     "RemediationApprovalWorkflow",
 ]

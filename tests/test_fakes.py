@@ -17,7 +17,7 @@ def test_checkout_prompt_returns_db_pool_hypothesis() -> None:
 
     assert top.cause == "db_connection_pool_regression"
     assert top.confidence == 0.91
-    assert result.recommended_next_action == "rollback_deployment"
+    assert result.recommended_action == "rollback_deployment"
     combined = " ".join(item.summary.lower() for item in top.evidence)
     assert "deployment" in combined
     assert "database connection pool timeout" in combined
@@ -30,7 +30,7 @@ def test_auth_prompt_returns_token_validation_hypothesis() -> None:
 
     assert top.cause == "auth_token_validation_regression"
     assert top.confidence == 0.93
-    assert result.recommended_next_action == "rollback_deployment"
+    assert result.recommended_action == "rollback_deployment"
     combined = " ".join(item.summary.lower() for item in top.evidence)
     assert "v2.7.1" in combined
     assert "token validation" in combined or "signature" in combined
@@ -43,7 +43,7 @@ def test_payments_prompt_returns_timeout_hypothesis() -> None:
 
     assert top.cause == "payment_provider_timeout_regression"
     assert top.confidence == 0.90
-    assert result.recommended_next_action == "rollback_deployment"
+    assert result.recommended_action == "rollback_deployment"
     combined = " ".join(item.summary.lower() for item in top.evidence)
     assert "v3.4.2" in combined
     assert "timeout" in combined
@@ -58,15 +58,15 @@ def test_explicit_cause_override_still_wins() -> None:
     )
 
     assert result.hypotheses[0].cause == "cpu_saturation"
-    assert result.recommended_next_action == "rollback_deployment"
+    assert result.recommended_action == "rollback_deployment"
 
 
 def test_explicit_action_override_still_wins() -> None:
-    provider = FakeModelProvider(recommended_next_action="increase_connection_pool")
+    provider = FakeModelProvider(recommended_next_action="no_supported_action")
     result = _analyze(
         "Affected service: checkout-api",
         provider=provider,
     )
 
-    assert result.recommended_next_action == "increase_connection_pool"
+    assert result.recommended_action == "no_supported_action"
     assert result.hypotheses[0].cause == "db_connection_pool_regression"
