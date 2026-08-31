@@ -1,7 +1,12 @@
 from simulator.environment import SimulatedEnvironment
 
 from backend.app.observability.tracing import get_tracer
-from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
+from backend.app.tools.schemas import (
+    DeploymentResponse,
+    LogResponse,
+    MetricResponse,
+    ServiceHealthResponse,
+)
 
 
 class DiagnosticTools:
@@ -38,3 +43,13 @@ class DiagnosticTools:
                 DeploymentResponse.model_validate(event, from_attributes=True)
                 for event in events
             ]
+
+    def get_service_health(self, service: str) -> ServiceHealthResponse:
+        with get_tracer().start_as_current_span(
+            "opspilot.tool.get_service_health"
+        ) as span:
+            span.set_attribute("opspilot.service", service)
+            span.set_attribute("opspilot.tool", "get_service_health")
+            health = self._environment.get_service_health(service)
+            span.set_attribute("opspilot.healthy", health.healthy)
+            return ServiceHealthResponse.model_validate(health, from_attributes=True)

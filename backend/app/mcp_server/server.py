@@ -4,7 +4,12 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from backend.app.tools.diagnostics import DiagnosticTools
-from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
+from backend.app.tools.schemas import (
+    DeploymentResponse,
+    LogResponse,
+    MetricResponse,
+    ServiceHealthResponse,
+)
 
 
 def create_mcp_server(tools: DiagnosticTools) -> MCPServer:
@@ -26,6 +31,15 @@ def create_mcp_server(tools: DiagnosticTools) -> MCPServer:
     @server.tool(description="Retrieve recent deployment history for a service.")
     def get_recent_deployments(service: str) -> list[DeploymentResponse]:
         return _call_diagnostic(tools.get_recent_deployments, service)
+
+    @server.tool(
+        description=(
+            "Evaluate current service health against production latency and "
+            "error-rate thresholds."
+        )
+    )
+    def get_service_health(service: str) -> ServiceHealthResponse:
+        return _call_diagnostic(tools.get_service_health, service)
 
     return server
 

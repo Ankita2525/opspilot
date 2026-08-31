@@ -7,10 +7,6 @@ from langgraph.types import Command, interrupt
 from backend.app.safety.approvals import ApprovalService
 from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.remediation import ROLLBACK_ACTION, RemediationTools
-from backend.app.tools.schemas import MetricResponse
-
-RECOVERED_P95_LATENCY_MS = 218
-RECOVERED_ERROR_RATE_PERCENT = 0.3
 
 
 class RemediationState(TypedDict):
@@ -144,12 +140,11 @@ class RemediationApprovalWorkflow:
         }
 
     def _verify_recovery(self, state: RemediationState) -> dict:
-        metrics = self._diagnostic_tools.query_metrics(state["service"])
-        recovered = _metrics_indicate_recovery(metrics)
+        health = self._diagnostic_tools.get_service_health(state["service"])
         return {
-            "recovered_p95_latency_ms": metrics.p95_latency_ms,
-            "recovered_error_rate_percent": metrics.error_rate_percent,
-            "status": "resolved" if recovered else "remediation_executed",
+            "recovered_p95_latency_ms": health.p95_latency_ms,
+            "recovered_error_rate_percent": health.error_rate_percent,
+            "status": "resolved" if health.healthy else "remediation_failed",
         }
 
     def _reject_remediation(self, state: RemediationState) -> dict:
@@ -157,11 +152,3 @@ class RemediationApprovalWorkflow:
             "execution_success": False,
             "status": "rejected",
         }
-
-
-def _metrics_indicate_recovery(metrics: MetricResponse) -> bool:
-    """Scenario-specific recovery check; replace later with a generic health policy."""
-    return (
-        metrics.p95_latency_ms == RECOVERED_P95_LATENCY_MS
-        and metrics.error_rate_percent == RECOVERED_ERROR_RATE_PERCENT
-    )

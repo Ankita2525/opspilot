@@ -4,6 +4,7 @@ _ACTION_RISK = {
     "query_metrics": RiskLevel.READ,
     "get_service_logs": RiskLevel.READ,
     "get_recent_deployments": RiskLevel.READ,
+    "get_service_health": RiskLevel.READ,
     "rollback_deployment": RiskLevel.HIGH_RISK,
 }
 

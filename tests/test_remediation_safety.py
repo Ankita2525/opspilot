@@ -32,6 +32,7 @@ def test_read_only_actions_are_classified_read() -> None:
     assert policy.classify("query_metrics") == RiskLevel.READ
     assert policy.classify("get_service_logs") == RiskLevel.READ
     assert policy.classify("get_recent_deployments") == RiskLevel.READ
+    assert policy.classify("get_service_health") == RiskLevel.READ
 
 
 def test_unknown_policy_action_raises_value_error() -> None:

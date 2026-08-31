@@ -21,7 +21,7 @@ from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.remediation import RemediationTools
 from backend.app.tools.schemas import MetricResponse
 from simulator.environment import SimulatedEnvironment
-from simulator.scenarios import CHECKOUT_DB_POOL_REGRESSION_ID, get_scenario
+from simulator.scenarios import get_scenario, list_scenarios
 
 
 def create_app(provider: ModelProvider | None = None) -> FastAPI:
@@ -47,14 +47,14 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
         return HealthResponse(status="ok", service="opspilot")
 
     @app.get("/api/scenarios", response_model=list[ScenarioSummary])
-    def list_scenarios() -> list[ScenarioSummary]:
-        scenario = get_scenario(CHECKOUT_DB_POOL_REGRESSION_ID)
+    def list_public_scenarios() -> list[ScenarioSummary]:
         return [
             ScenarioSummary(
                 id=scenario.id,
                 title=scenario.title,
                 affected_service=scenario.affected_service,
             )
+            for scenario in list_scenarios()
         ]
 
     @app.post("/api/incidents/start", response_model=IncidentStartResponse)

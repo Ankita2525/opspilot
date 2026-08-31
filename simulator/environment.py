@@ -7,6 +7,8 @@ from simulator.models import (
     LogEvent,
     MetricSnapshot,
     Remediation,
+    ServiceHealth,
+    evaluate_service_health,
 )
 from simulator.scenarios import get_scenario
 
@@ -34,6 +36,23 @@ class SimulatedEnvironment:
         if self._resolved:
             return scenario.recovered_metrics
         return scenario.incident_metrics
+
+    def get_service_health(self, service: str) -> ServiceHealth:
+        scenario = self._require_known_service(service)
+        metrics = self.query_metrics(service)
+        thresholds = scenario.health_thresholds
+        return ServiceHealth(
+            service=service,
+            p95_latency_ms=metrics.p95_latency_ms,
+            error_rate_percent=metrics.error_rate_percent,
+            max_p95_latency_ms=thresholds.max_p95_latency_ms,
+            max_error_rate_percent=thresholds.max_error_rate_percent,
+            healthy=evaluate_service_health(
+                metrics.p95_latency_ms,
+                metrics.error_rate_percent,
+                thresholds,
+            ),
+        )
 
     def get_logs(self, service: str) -> list[LogEvent]:
         scenario = self._require_known_service(service)

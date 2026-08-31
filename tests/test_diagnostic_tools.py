@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from backend.app.tools.diagnostics import DiagnosticTools
-from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
+from backend.app.tools.schemas import (
+    DeploymentResponse,
+    LogResponse,
+    MetricResponse,
+    ServiceHealthResponse,
+)
 from simulator.environment import SimulatedEnvironment
 
 SCENARIO_ID = "checkout-db-pool-regression"
@@ -88,6 +93,7 @@ def test_diagnostic_reads_do_not_mutate_incident() -> None:
     tools.query_metrics(SERVICE)
     tools.get_service_logs(SERVICE)
     tools.get_recent_deployments(SERVICE)
+    tools.get_service_health(SERVICE)
 
     assert environment.is_resolved is False
     assert environment.get_audit_events() == []
@@ -95,3 +101,35 @@ def test_diagnostic_reads_do_not_mutate_incident() -> None:
     metrics = tools.query_metrics(SERVICE)
     assert metrics.p95_latency_ms == 1940
     assert metrics.error_rate_percent == 8.2
+
+
+def test_get_service_health_returns_typed_response() -> None:
+    _, tools = _loaded_tools()
+
+    health = tools.get_service_health(SERVICE)
+
+    assert isinstance(health, ServiceHealthResponse)
+    assert health.service == SERVICE
+    assert health.healthy is False
+    assert health.p95_latency_ms == 1940
+    assert health.error_rate_percent == 8.2
+    assert health.max_p95_latency_ms == 400
+    assert health.max_error_rate_percent == 1.0
+
+
+def test_get_service_health_is_healthy_after_rollback() -> None:
+    environment, tools = _loaded_tools()
+    environment.rollback_deployment(SERVICE, BAD_VERSION)
+
+    health = tools.get_service_health(SERVICE)
+
+    assert health.healthy is True
+    assert health.p95_latency_ms == 218
+    assert health.error_rate_percent == 0.3
+
+
+def test_get_service_health_unknown_service_raises_value_error() -> None:
+    _, tools = _loaded_tools()
+
+    with pytest.raises(ValueError, match="Unknown service"):
+        tools.get_service_health("inventory-api")

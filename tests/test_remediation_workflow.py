@@ -238,3 +238,110 @@ def test_different_thread_id_does_not_resume_pending_workflow() -> None:
     assert environment.get_audit_events() == []
     payload = workflow.pending_interrupt(THREAD_ID)
     assert payload["proposal_id"] == PROPOSAL_ID
+
+
+def test_workflow_module_has_no_checkout_specific_recovery_numbers() -> None:
+    import inspect
+
+    from backend.app.agent import remediation_workflow
+
+    source = inspect.getsource(remediation_workflow)
+    assert "218" not in source
+    assert "0.3" not in source
+    assert "RECOVERED_P95" not in source
+
+
+SCENARIO_CASES = [
+    ("checkout-db-pool-regression", "checkout-api", "v1.18.3", 218, 0.3, 1940, 8.2),
+    ("auth-token-validation-regression", "auth-service", "v2.7.1", 165, 0.4, 870, 14.6),
+    (
+        "payments-provider-timeout-regression",
+        "payments-service",
+        "v3.4.2",
+        295,
+        0.6,
+        2680,
+        11.1,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "scenario_id, service, version, recovered_p95, recovered_error, incident_p95, incident_error",
+    SCENARIO_CASES,
+)
+def test_approved_rollback_resolves_each_scenario_via_health_policy(
+    scenario_id: str,
+    service: str,
+    version: str,
+    recovered_p95: int,
+    recovered_error: float,
+    incident_p95: int,
+    incident_error: float,
+) -> None:
+    environment = SimulatedEnvironment()
+    environment.load_scenario(scenario_id)
+    approvals = ApprovalService()
+    workflow = RemediationApprovalWorkflow(
+        remediation_tools=RemediationTools(environment, approvals),
+        approvals=approvals,
+        diagnostic_tools=DiagnosticTools(environment),
+    )
+    thread_id = f"{scenario_id}-thread"
+    proposal_id = f"{scenario_id}-proposal"
+    workflow.start(
+        thread_id=thread_id,
+        proposal_id=proposal_id,
+        incident_id=scenario_id,
+        service=service,
+        version=version,
+    )
+    assert environment.get_service_health(service).healthy is False
+
+    result = workflow.resume(thread_id=thread_id, approved=True)
+
+    assert result["status"] == "resolved"
+    assert result["recovered_p95_latency_ms"] == recovered_p95
+    assert result["recovered_error_rate_percent"] == recovered_error
+    assert environment.get_service_health(service).healthy is True
+
+
+@pytest.mark.parametrize(
+    "scenario_id, service, version, recovered_p95, recovered_error, incident_p95, incident_error",
+    SCENARIO_CASES,
+)
+def test_rejected_rollback_leaves_each_scenario_degraded(
+    scenario_id: str,
+    service: str,
+    version: str,
+    recovered_p95: int,
+    recovered_error: float,
+    incident_p95: int,
+    incident_error: float,
+) -> None:
+    environment = SimulatedEnvironment()
+    environment.load_scenario(scenario_id)
+    approvals = ApprovalService()
+    workflow = RemediationApprovalWorkflow(
+        remediation_tools=RemediationTools(environment, approvals),
+        approvals=approvals,
+        diagnostic_tools=DiagnosticTools(environment),
+    )
+    thread_id = f"{scenario_id}-reject-thread"
+    proposal_id = f"{scenario_id}-reject-proposal"
+    workflow.start(
+        thread_id=thread_id,
+        proposal_id=proposal_id,
+        incident_id=scenario_id,
+        service=service,
+        version=version,
+    )
+
+    result = workflow.resume(thread_id=thread_id, approved=False)
+
+    assert result["status"] == "rejected"
+    assert environment.is_resolved is False
+    metrics = environment.query_metrics(service)
+    assert metrics.p95_latency_ms == incident_p95
+    assert metrics.error_rate_percent == incident_error
+    assert environment.get_service_health(service).healthy is False

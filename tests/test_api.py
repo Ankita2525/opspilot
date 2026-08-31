@@ -10,6 +10,11 @@ from tests.fakes import FakeModelProvider
 SCENARIO_ID = "checkout-db-pool-regression"
 SERVICE = "checkout-api"
 BAD_VERSION = "v1.18.3"
+ALL_SCENARIO_IDS = [
+    "checkout-db-pool-regression",
+    "auth-token-validation-regression",
+    "payments-provider-timeout-regression",
+]
 FORBIDDEN = (
     "known_root_cause",
     "expected_remediation",
@@ -49,7 +54,8 @@ def test_scenarios_returns_checkout_db_pool_regression() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert any(item["id"] == SCENARIO_ID for item in payload)
+    ids = [item["id"] for item in payload]
+    assert ids == ALL_SCENARIO_IDS
 
 
 def test_scenario_response_does_not_expose_known_root_cause() -> None:
@@ -253,3 +259,16 @@ def test_api_responses_do_not_leak_ground_truth_or_secrets() -> None:
         json={"scenario_id": "missing"},
     ).json()
     _assert_no_leaks(unknown)
+
+
+def test_start_incident_works_for_all_registered_scenarios() -> None:
+    for scenario_id in ALL_SCENARIO_IDS:
+        client = _client()
+        response = _start(client, scenario_id=scenario_id)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["scenario_id"] == scenario_id
+        assert payload["status"] == "approval_required"
+        assert payload["resolved"] is False
+        assert "known_root_cause" not in json.dumps(payload)
+        assert "expected_remediation" not in json.dumps(payload)

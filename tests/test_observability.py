@@ -88,16 +88,26 @@ def test_get_recent_deployments_emits_span() -> None:
     )
 
 
+def test_get_service_health_emits_span() -> None:
+    tools = DiagnosticTools(_loaded_env())
+
+    tools.get_service_health(SERVICE)
+
+    assert _span("opspilot.tool.get_service_health").name == "opspilot.tool.get_service_health"
+
+
 def test_diagnostic_spans_contain_checkout_api_service() -> None:
     tools = DiagnosticTools(_loaded_env())
     tools.query_metrics(SERVICE)
     tools.get_service_logs(SERVICE)
     tools.get_recent_deployments(SERVICE)
+    tools.get_service_health(SERVICE)
 
     for name in (
         "opspilot.tool.query_metrics",
         "opspilot.tool.get_service_logs",
         "opspilot.tool.get_recent_deployments",
+        "opspilot.tool.get_service_health",
     ):
         assert _span(name).attributes["opspilot.service"] == SERVICE
 

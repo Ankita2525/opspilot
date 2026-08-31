@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.app.agent.hypotheses import HypothesisEngine
 from backend.app.agent.workflow import InvestigationWorkflow
 from backend.app.evals.evaluator import IncidentEvaluator
@@ -190,3 +192,61 @@ def test_evaluator_does_not_mutate_environment() -> None:
     assert environment.query_metrics(SERVICE) == before_metrics
     assert before_metrics.p95_latency_ms == 1940
     assert before_metrics.error_rate_percent == 8.2
+
+
+@pytest.mark.parametrize(
+    "scenario_id, service, cause, recovered_p95, recovered_error",
+    [
+        (
+            "checkout-db-pool-regression",
+            "checkout-api",
+            "db_connection_pool_regression",
+            218,
+            0.3,
+        ),
+        (
+            "auth-token-validation-regression",
+            "auth-service",
+            "auth_token_validation_regression",
+            165,
+            0.4,
+        ),
+        (
+            "payments-provider-timeout-regression",
+            "payments-service",
+            "payment_provider_timeout_regression",
+            295,
+            0.6,
+        ),
+    ],
+)
+def test_evaluator_uses_each_scenario_recovered_metrics(
+    scenario_id: str,
+    service: str,
+    cause: str,
+    recovered_p95: int,
+    recovered_error: float,
+) -> None:
+    environment = SimulatedEnvironment()
+    scenario = environment.load_scenario(scenario_id)
+    investigation = InvestigationWorkflow(
+        tools=DiagnosticTools(environment),
+        hypothesis_engine=HypothesisEngine(
+            FakeModelProvider(cause=cause, recommended_next_action="rollback_deployment")
+        ),
+    ).run(f"inc-{scenario_id}", service)
+
+    result = IncidentEvaluator().evaluate(
+        scenario=scenario,
+        investigation_result=investigation,
+        final_status="resolved",
+        final_metrics=_metrics(scenario, recovered=True),
+        approval_was_required=True,
+        remediation_executed=True,
+    )
+
+    assert result.final_p95_latency_ms == recovered_p95
+    assert result.final_error_rate_percent == recovered_error
+    assert result.latency_recovered is True
+    assert result.error_rate_recovered is True
+    assert result.resolution_success is True

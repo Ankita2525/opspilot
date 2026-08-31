@@ -27,3 +27,14 @@ class DeploymentResponse(BaseModel):
     service: str
     version: str
     timestamp: datetime
+
+
+class ServiceHealthResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    service: str
+    p95_latency_ms: int
+    error_rate_percent: float
+    max_p95_latency_ms: int
+    max_error_rate_percent: float
+    healthy: bool

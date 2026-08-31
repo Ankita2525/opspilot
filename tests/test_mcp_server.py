@@ -20,6 +20,7 @@ EXPECTED_TOOLS = [
     "query_metrics",
     "get_service_logs",
     "get_recent_deployments",
+    "get_service_health",
 ]
 WRITE_TOOLS = [
     "rollback_deployment",
@@ -150,6 +151,7 @@ def test_mcp_calls_do_not_resolve_incident() -> None:
         await client.call_tool("query_metrics", {"service": SERVICE})
         await client.call_tool("get_service_logs", {"service": SERVICE})
         await client.call_tool("get_recent_deployments", {"service": SERVICE})
+        await client.call_tool("get_service_health", {"service": SERVICE})
         assert environment.is_resolved is False
 
     _run(_check)
@@ -164,6 +166,7 @@ def test_environment_unchanged_after_mcp_reads() -> None:
         await client.call_tool("query_metrics", {"service": SERVICE})
         await client.call_tool("get_service_logs", {"service": SERVICE})
         await client.call_tool("get_recent_deployments", {"service": SERVICE})
+        await client.call_tool("get_service_health", {"service": SERVICE})
 
         assert environment.is_resolved is False
         assert environment.get_audit_events() == []
@@ -181,6 +184,7 @@ def test_simulator_ground_truth_is_not_exposed() -> None:
         metrics = await client.call_tool("query_metrics", {"service": SERVICE})
         logs = await client.call_tool("get_service_logs", {"service": SERVICE})
         deployments = await client.call_tool("get_recent_deployments", {"service": SERVICE})
+        health = await client.call_tool("get_service_health", {"service": SERVICE})
         listed = await client.list_tools()
         payload = json.dumps(
             {
@@ -188,6 +192,7 @@ def test_simulator_ground_truth_is_not_exposed() -> None:
                 "metrics": _structured(metrics),
                 "logs": _structured(logs),
                 "deployments": _structured(deployments),
+                "health": _structured(health),
             }
         )
         assert "known_root_cause" not in payload
@@ -206,5 +211,17 @@ def test_unknown_service_failure_is_surfaced() -> None:
             block.text for block in result.content if getattr(block, "text", None)
         )
         assert "Unknown service" in messages
+
+    _run(_check)
+
+
+def test_get_service_health_returns_unhealthy_checkout_state() -> None:
+    async def _check(client: Client, _environment: SimulatedEnvironment) -> None:
+        result = await client.call_tool("get_service_health", {"service": SERVICE})
+        health = _structured(result)
+        assert health["service"] == SERVICE
+        assert health["healthy"] is False
+        assert health["p95_latency_ms"] == 1940
+        assert health["max_p95_latency_ms"] == 400
 
     _run(_check)
