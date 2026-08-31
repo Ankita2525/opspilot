@@ -10,7 +10,11 @@ from backend.app.agent.hypotheses import (
 class FakeModelProvider:
     """Test-only provider that records prompts and returns a fixed hypothesis."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        recommended_next_action: str = "rollback_deployment",
+    ) -> None:
+        self.recommended_next_action = recommended_next_action
         self.system_prompts: list[str] = []
         self.user_prompts: list[str] = []
 
@@ -43,7 +47,7 @@ class FakeModelProvider:
                     ],
                 )
             ],
-            recommended_next_action="rollback_deployment",
+            recommended_next_action=self.recommended_next_action,
             reasoning_summary=(
                 "Evidence strongly correlates the recent deployment with "
                 "database pool failures and checkout degradation."
