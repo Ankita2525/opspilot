@@ -206,3 +206,10 @@ def _count(flags: Iterable[bool]) -> int:
 
 def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator
+
+
+def run_deterministic_baseline_evaluation() -> EvaluationSuiteResult:
+    """Run the reference deterministic baseline without external model APIs."""
+    from backend.app.models.deterministic_provider import DeterministicModelProvider
+
+    return EvaluationSuiteRunner(provider=DeterministicModelProvider()).run()

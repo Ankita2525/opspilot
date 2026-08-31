@@ -1,5 +1,6 @@
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
@@ -19,6 +20,7 @@ from backend.app.api.public_records import (
 from backend.app.api.schemas import (
     BaselineEvaluationResponse,
     HealthResponse,
+    ReadyResponse,
     IncidentApprovalResponse,
     IncidentAuditResponse,
     IncidentStartResponse,
@@ -30,8 +32,10 @@ from backend.app.api.schemas import (
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
 from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.ids import new_incident_id
+from backend.app.config import DEFAULT_CORS_ORIGINS, OpsPilotSettings
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
+from backend.app.runtime import RuntimeResources, build_runtime_from_settings
 from backend.app.observability.tracing import get_tracer
 from backend.app.persistence.lifecycle import IncidentLifecyclePersistence
 from backend.app.persistence.memory import InMemoryOpsPilotRepository
@@ -53,30 +57,50 @@ def create_app(
     repository: OpsPilotRepository | None = None,
     now: Callable[[], datetime] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    settings: OpsPilotSettings | None = None,
 ) -> FastAPI:
     os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
-    resolved_provider: ModelProvider = (
-        provider if provider is not None else GroqModelProvider()
+    runtime = _resolve_runtime(
+        provider=provider,
+        repository=repository,
+        checkpointer=checkpointer,
+        settings=settings,
     )
-    resolved_repository: OpsPilotRepository = (
-        repository if repository is not None else InMemoryOpsPilotRepository()
+    resolved_provider = runtime.provider
+    resolved_repository = runtime.repository
+    resolved_checkpointer = runtime.checkpointer
+    resolved_settings = runtime.settings
+    cors_origins = list(
+        resolved_settings.cors_origins
+        if resolved_settings is not None
+        else DEFAULT_CORS_ORIGINS
     )
     persistence = IncidentLifecyclePersistence(resolved_repository, now=now)
     store = IncidentSessionStore()
-    app = FastAPI(title="OpsPilot")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        runtime.startup()
+        app.state.checkpointer = runtime.checkpointer
+        runtime.ensure_production_checkpointer_configured()
+        try:
+            yield
+        finally:
+            runtime.shutdown()
+
+    app = FastAPI(title="OpsPilot", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.provider = resolved_provider
     app.state.store = store
     app.state.repository = resolved_repository
-    app.state.checkpointer = checkpointer
+    app.state.checkpointer = resolved_checkpointer
+    app.state.runtime = runtime
+    app.state.settings = resolved_settings
 
     def _runtime_for_scenario(
         scenario_id: str,
@@ -96,7 +120,8 @@ def create_app(
                 remediation_tools=RemediationTools(environment, approvals),
                 approvals=approvals,
                 diagnostic_tools=diagnostics,
-                checkpointer=checkpointer,
+                checkpointer=app.state.checkpointer,
+                allow_in_memory_checkpointer=runtime.allow_in_memory_checkpointer,
             ),
         )
         return environment, coordinator
@@ -139,6 +164,17 @@ def create_app(
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="opspilot")
+
+    @app.get("/ready", response_model=ReadyResponse)
+    def ready() -> ReadyResponse:
+        database_status = runtime.database_status
+        model_provider = runtime.model_provider_name
+        is_ready = database_status in {"ready", "in_memory"}
+        return ReadyResponse(
+            status="ready" if is_ready else "not_ready",
+            database=database_status,
+            model_provider=model_provider,
+        )
 
     @app.get("/api/scenarios", response_model=list[ScenarioSummary])
     def list_public_scenarios() -> list[ScenarioSummary]:
@@ -278,13 +314,43 @@ def create_app(
         response_model=BaselineEvaluationResponse,
     )
     def get_baseline_evaluation() -> BaselineEvaluationResponse:
-        from backend.app.evals.suite import EvaluationSuiteRunner
-        from tests.fakes import FakeModelProvider
+        from backend.app.evals.suite import run_deterministic_baseline_evaluation
 
-        result = EvaluationSuiteRunner(provider=FakeModelProvider()).run()
+        result = run_deterministic_baseline_evaluation()
         return public_baseline_evaluation(result)
 
     return app
+
+
+def _resolve_runtime(
+    *,
+    provider: ModelProvider | None,
+    repository: OpsPilotRepository | None,
+    checkpointer: BaseCheckpointSaver | None,
+    settings: OpsPilotSettings | None,
+) -> RuntimeResources:
+    has_injections = (
+        provider is not None
+        or repository is not None
+        or checkpointer is not None
+    )
+    if has_injections:
+        return RuntimeResources(
+            provider=provider if provider is not None else GroqModelProvider(),
+            repository=(
+                repository
+                if repository is not None
+                else InMemoryOpsPilotRepository()
+            ),
+            checkpointer=checkpointer,
+            settings=settings,
+        )
+
+    resolved_settings = settings or OpsPilotSettings.from_env()
+    runtime = build_runtime_from_settings(resolved_settings)
+    if checkpointer is not None:
+        runtime.checkpointer = checkpointer
+    return runtime
 
 
 def _require_session(

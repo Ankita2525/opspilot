@@ -15,6 +15,14 @@ class HealthResponse(BaseModel):
     service: str
 
 
+class ReadyResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ready", "not_ready"]
+    database: str
+    model_provider: str
+
+
 class ScenarioSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 

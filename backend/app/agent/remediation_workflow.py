@@ -6,6 +6,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from backend.app.runtime import ProductionCheckpointerError
 from backend.app.safety.approvals import ApprovalService
 from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.remediation import ROLLBACK_ACTION, RemediationTools
@@ -32,11 +33,15 @@ class RemediationApprovalWorkflow:
         approvals: ApprovalService,
         diagnostic_tools: DiagnosticTools,
         checkpointer: BaseCheckpointSaver | None = None,
+        allow_in_memory_checkpointer: bool = True,
     ) -> None:
         self._remediation_tools = remediation_tools
         self._approvals = approvals
         self._diagnostic_tools = diagnostic_tools
-        self._checkpointer = _configure_checkpointer(checkpointer)
+        self._checkpointer = _configure_checkpointer(
+            checkpointer,
+            allow_in_memory_fallback=allow_in_memory_checkpointer,
+        )
         self._graph = self._build_graph()
 
     def start(
@@ -164,9 +169,15 @@ def _strict_checkpoint_serde() -> JsonPlusSerializer:
 
 def _configure_checkpointer(
     checkpointer: BaseCheckpointSaver | None,
+    *,
+    allow_in_memory_fallback: bool,
 ) -> BaseCheckpointSaver:
     serde = _strict_checkpoint_serde()
     if checkpointer is None:
+        if not allow_in_memory_fallback:
+            raise ProductionCheckpointerError(
+                "Production PostgreSQL runtime requires a Postgres checkpointer."
+            )
         return InMemorySaver(serde=serde)
     checkpointer.serde = serde
     return checkpointer

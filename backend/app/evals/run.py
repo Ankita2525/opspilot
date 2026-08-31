@@ -1,16 +1,14 @@
-"""Run the deterministic evaluation suite with FakeModelProvider.
+"""Run the deterministic evaluation suite with DeterministicModelProvider.
 
 Requires no API key, PostgreSQL, or network access.
 """
 
 from backend.app.evals.report import render_evaluation_report
-from backend.app.evals.suite import EvaluationSuiteRunner
+from backend.app.evals.suite import run_deterministic_baseline_evaluation
 
 
 def main() -> None:
-    from tests.fakes import FakeModelProvider
-
-    result = EvaluationSuiteRunner(provider=FakeModelProvider()).run()
+    result = run_deterministic_baseline_evaluation()
     print(render_evaluation_report(result), end="")
 
 

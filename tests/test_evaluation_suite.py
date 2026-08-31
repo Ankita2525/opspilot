@@ -311,4 +311,7 @@ def test_suite_module_has_no_network_or_hosted_dependencies() -> None:
         assert "http://" not in source
         assert "https://" not in source
     assert "groq" not in suite_source.lower()
-    assert "FakeModelProvider" in run_source
+    assert "tests" not in run_source
+    assert "FakeModelProvider" not in run_source
+    assert "run_deterministic_baseline_evaluation" in run_source
+    assert "DeterministicModelProvider" in suite_source

@@ -1,0 +1,10 @@
+.git
+node_modules
+.next
+.env
+.env.*
+coverage
+.DS_Store
+README.md
+AGENTS.md
+CLAUDE.md

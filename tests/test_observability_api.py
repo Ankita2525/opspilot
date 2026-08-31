@@ -247,6 +247,32 @@ def test_baseline_evaluation_does_not_use_app_provider_or_postgres() -> None:
     assert isinstance(app.state.repository, InMemoryOpsPilotRepository)
 
 
+def test_baseline_evaluation_works_without_tests_package(monkeypatch) -> None:
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tests" or name.startswith("tests."):
+            raise ModuleNotFoundError(f"blocked test import: {name}")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    response = TestClient(create_app(provider=FakeModelProvider())).get(
+        "/api/evaluations/baseline"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["evaluation_mode"] == "deterministic_baseline"
+    assert payload["passed_scenarios"] == 3
+    assert payload["root_cause_accuracy"] == 1.0
+    assert payload["recommended_action_accuracy"] == 1.0
+    assert payload["resolution_rate"] == 1.0
+    assert payload["health_recovery_rate"] == 1.0
+
+
 def test_existing_stream_and_approval_routes_remain_unchanged() -> None:
     client, _ = _client()
     stream = client.post("/api/incidents/stream", json={"scenario_id": CHECKOUT_ID})
