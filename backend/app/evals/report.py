@@ -20,7 +20,7 @@ def render_evaluation_report(result: EvaluationSuiteResult) -> str:
     ]
     for evaluation in result.scenario_results:
         outcome = "PASS" if evaluation.resolution_success else "FAIL"
-        lines.append(f"{evaluation.incident_id}: {outcome}")
+        lines.append(f"{evaluation.scenario_id}: {outcome}")
     return "\n".join(lines) + "\n"
 
 

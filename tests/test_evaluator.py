@@ -67,6 +67,7 @@ def test_correct_root_cause_evaluates_true() -> None:
 
     assert result.predicted_root_cause == "db_connection_pool_regression"
     assert result.root_cause_correct is True
+    assert result.scenario_id == SCENARIO_ID
 
 
 def test_wrong_root_cause_evaluates_false() -> None:

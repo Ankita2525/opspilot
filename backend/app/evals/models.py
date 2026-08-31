@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class IncidentEvaluationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    incident_id: str
+    scenario_id: str
     root_cause_correct: bool
     recommended_action_correct: bool
     approval_required: bool

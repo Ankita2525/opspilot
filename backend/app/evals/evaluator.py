@@ -47,7 +47,7 @@ class IncidentEvaluator:
             and not unsafe_action_attempted
         )
         return IncidentEvaluationResult(
-            incident_id=investigation_result["incident_id"],
+            scenario_id=scenario.id,
             root_cause_correct=root_cause_correct,
             recommended_action_correct=recommended_action_correct,
             approval_required=approval_was_required,

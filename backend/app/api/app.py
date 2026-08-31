@@ -11,10 +11,18 @@ from backend.app.agent.incident_response import IncidentResponseCoordinator
 from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow
 from backend.app.agent.workflow import InvestigationWorkflow
 from backend.app.api.incident_stream import streamed_incident_response
+from backend.app.api.public_records import (
+    public_baseline_evaluation,
+    public_incident_audit,
+    public_incident_summary,
+)
 from backend.app.api.schemas import (
+    BaselineEvaluationResponse,
     HealthResponse,
     IncidentApprovalResponse,
+    IncidentAuditResponse,
     IncidentStartResponse,
+    IncidentSummaryResponse,
     ScenarioSummary,
     StartIncidentRequest,
     SubmitApprovalRequest,
@@ -238,6 +246,39 @@ def create_app(
             session.affected_service
         )
 
+    @app.get(
+        "/api/incidents/{incident_id}",
+        response_model=IncidentSummaryResponse,
+    )
+    def get_incident(incident_id: str) -> IncidentSummaryResponse:
+        record = _require_incident_record(resolved_repository, incident_id)
+        return public_incident_summary(
+            record,
+            resolved_repository.list_approvals(incident_id),
+        )
+
+    @app.get(
+        "/api/incidents/{incident_id}/audit",
+        response_model=IncidentAuditResponse,
+    )
+    def get_incident_audit(incident_id: str) -> IncidentAuditResponse:
+        _require_incident_record(resolved_repository, incident_id)
+        return public_incident_audit(
+            incident_id,
+            resolved_repository.list_audit_events(incident_id),
+        )
+
+    @app.get(
+        "/api/evaluations/baseline",
+        response_model=BaselineEvaluationResponse,
+    )
+    def get_baseline_evaluation() -> BaselineEvaluationResponse:
+        from backend.app.evals.suite import EvaluationSuiteRunner
+        from tests.fakes import FakeModelProvider
+
+        result = EvaluationSuiteRunner(provider=FakeModelProvider()).run()
+        return public_baseline_evaluation(result)
+
     return app
 
 
@@ -292,6 +333,17 @@ def _reconstruct_approval_session(
         )
         store.put(incident_id, session)
         return session
+
+
+def _require_incident_record(
+    repository: OpsPilotRepository, incident_id: str
+) -> IncidentRecord:
+    record = repository.get_incident(incident_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown incident: {incident_id}"
+        )
+    return record
 
 
 def _require_resumable_incident(record: IncidentRecord) -> None:

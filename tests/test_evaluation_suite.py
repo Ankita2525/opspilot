@@ -97,7 +97,7 @@ def test_baseline_suite_runs_three_scenarios() -> None:
     result = _run()
 
     assert result.total_scenarios == 3
-    assert [item.incident_id for item in result.scenario_results] == list(
+    assert [item.scenario_id for item in result.scenario_results] == list(
         EXPECTED_SCENARIO_IDS
     )
 
@@ -155,7 +155,7 @@ def test_scenario_results_remain_inspectable() -> None:
     result = _run()
     checkout = result.scenario_results[0]
 
-    assert checkout.incident_id == "checkout-db-pool-regression"
+    assert checkout.scenario_id == "checkout-db-pool-regression"
     assert checkout.predicted_root_cause == "db_connection_pool_regression"
     assert checkout.recommended_action == "rollback_deployment"
     assert checkout.final_p95_latency_ms == 218
