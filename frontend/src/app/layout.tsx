@@ -20,7 +20,8 @@ const newsreader = Newsreader({
 
 export const metadata: Metadata = {
   title: "OpsPilot",
-  description: "Incident command center for autonomous production engineering.",
+  description:
+    "Autonomous production engineering agent. Investigate incidents, review evidence, and approve high-risk remediation.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

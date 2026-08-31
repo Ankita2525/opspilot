@@ -1,3 +1,5 @@
+import { humanizeServiceName } from "@/lib/labels";
+
 type IncidentPhase = "ready" | "active" | "resolved" | "rejected";
 
 type IncidentHeaderProps = {
@@ -37,6 +39,9 @@ export function IncidentHeader({ phase, service, title }: IncidentHeaderProps) {
       <h1 className="incident-title">{title}</h1>
       <p className="incident-service">
         <span className="sr-only">Affected service: </span>
+        <span className="incident-service-name">
+          {humanizeServiceName(service)}
+        </span>
         <code>{service}</code>
       </p>
       <p className="incident-summary">{copy.summary}</p>

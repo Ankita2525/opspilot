@@ -8,6 +8,13 @@ const STEP_LABELS: Record<string, string> = {
 
 const ACRONYMS = new Set(["db", "api", "http", "slo", "p95"]);
 
+const SERVICE_WORDS: Record<string, string> = {
+  api: "API",
+  db: "DB",
+  auth: "Authentication",
+  http: "HTTP",
+};
+
 export function labelForStep(step: string): string {
   return STEP_LABELS[step] ?? humanizeIdentifier(step);
 }
@@ -25,6 +32,20 @@ export function humanizeIdentifier(value: string): string {
         return lower.charAt(0).toUpperCase() + lower.slice(1);
       }
       return lower;
+    })
+    .join(" ");
+}
+
+export function humanizeServiceName(service: string): string {
+  return service
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (SERVICE_WORDS[lower]) {
+        return SERVICE_WORDS[lower];
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
     })
     .join(" ");
 }

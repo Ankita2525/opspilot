@@ -148,6 +148,14 @@ body {
 
 .incident-service {
   margin: 0.7rem 0 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.incident-service-name {
+  font-weight: 600;
 }
 
 .incident-service code {
@@ -221,6 +229,124 @@ body {
   max-width: 40rem;
   font-size: 1.05rem;
   line-height: 1.55;
+}
+
+.hero {
+  padding: 0.35rem 0 0.25rem;
+}
+
+.hero-brand {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 2.9rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+  max-width: 18ch;
+}
+
+.hero-copy {
+  margin: 1rem 0 0;
+  max-width: 40rem;
+  color: var(--muted);
+  font-size: 1.08rem;
+  line-height: 1.6;
+}
+
+.section-heading {
+  margin: 0 0 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.scenario-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+
+.scenario-card {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+  width: 100%;
+  text-align: left;
+  padding: 1.15rem 1.2rem 1.05rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.scenario-card.selected {
+  border-width: 2px;
+  border-color: var(--investigate);
+  box-shadow: var(--shadow), inset 4px 0 0 var(--investigate);
+  padding-left: calc(1.2rem - 1px);
+}
+
+.scenario-card-service {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--investigate);
+}
+
+.scenario-card-title {
+  font-family: var(--font-display);
+  font-size: 1.28rem;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.scenario-card-id {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.84rem;
+  background: var(--investigate-soft);
+  padding: 0.12rem 0.4rem;
+  border-radius: 6px;
+}
+
+.scenario-card-state {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.scenario-card.selected .scenario-card-state {
+  color: var(--investigate);
+  font-weight: 650;
+}
+
+.start-row,
+.reset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+  margin-top: 1.15rem;
+}
+
+.start-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .status-copy {
@@ -491,6 +617,12 @@ body {
   opacity: 0.55;
 }
 
+@media (min-width: 700px) {
+  .scenario-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (min-width: 860px) {
   .workspace-grid,
   .recovery-metrics {
@@ -501,5 +633,11 @@ body {
   .workspace {
     padding-left: 2rem;
     padding-right: 2rem;
+  }
+}
+
+@media (min-width: 1080px) {
+  .scenario-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

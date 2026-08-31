@@ -8,8 +8,13 @@ import { IncidentHeader } from "@/components/IncidentHeader";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
+import { ScenarioCard } from "@/components/ScenarioCard";
 import { getScenarios, startIncident, submitApproval } from "@/lib/api";
-import { formatErrorRate, formatLatency } from "@/lib/labels";
+import {
+  formatErrorRate,
+  formatLatency,
+  humanizeServiceName,
+} from "@/lib/labels";
 import type {
   IncidentApprovalResponse,
   IncidentStartResponse,
@@ -26,7 +31,10 @@ type Phase =
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [scenario, setScenario] = useState<Scenario | null>(null);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(
+    null,
+  );
   const [incident, setIncident] = useState<IncidentStartResponse | null>(null);
   const [approval, setApproval] = useState<IncidentApprovalResponse | null>(
     null,
@@ -37,19 +45,26 @@ export default function Home() {
     "load" | "start" | "approve" | "reject"
   >("load");
 
+  const selectedScenario =
+    scenarios.find((item) => item.id === selectedScenarioId) ?? null;
+  const activeScenario =
+    scenarios.find((item) => item.id === incident?.scenario_id) ??
+    selectedScenario;
+
   const loadScenarios = useCallback(async () => {
     setRetryAction("load");
     try {
-      const scenarios = await getScenarios();
-      const selected = scenarios[0];
-      if (!selected) {
+      const loaded = await getScenarios();
+      if (!loaded[0]) {
         throw new Error("No demo scenarios are available.");
       }
-      setScenario(selected);
+      setScenarios(loaded);
+      setSelectedScenarioId((current) => current ?? loaded[0].id);
       setError(null);
       setPhase("ready");
     } catch (cause) {
-      setScenario(null);
+      setScenarios([]);
+      setSelectedScenarioId(null);
       setError(
         cause instanceof Error ? cause.message : "Unable to load scenarios.",
       );
@@ -62,15 +77,15 @@ export default function Home() {
 
     async function loadOnMount() {
       try {
-        const scenarios = await getScenarios();
+        const loaded = await getScenarios();
         if (cancelled) {
           return;
         }
-        const selected = scenarios[0];
-        if (!selected) {
+        if (!loaded[0]) {
           throw new Error("No demo scenarios are available.");
         }
-        setScenario(selected);
+        setScenarios(loaded);
+        setSelectedScenarioId(loaded[0].id);
         setPhase("ready");
       } catch (cause) {
         if (cancelled) {
@@ -90,7 +105,7 @@ export default function Home() {
   }, []);
 
   async function handleStart() {
-    if (!scenario) {
+    if (!selectedScenario) {
       return;
     }
     setError(null);
@@ -98,7 +113,7 @@ export default function Home() {
     setBusy(true);
     setPhase("investigating");
     try {
-      const started = await startIncident(scenario.id);
+      const started = await startIncident(selectedScenario.id);
       setIncident(started);
       setPhase("active");
     } catch (cause) {
@@ -149,12 +164,18 @@ export default function Home() {
     void handleApproval(retryAction === "approve");
   }
 
+  function resetToSelection() {
+    setIncident(null);
+    setApproval(null);
+    setError(null);
+    setBusy(false);
+    setPhase("ready");
+  }
+
+  const inIncident =
+    phase === "active" || phase === "resolved" || phase === "rejected";
   const headerPhase =
-    phase === "resolved" || phase === "rejected"
-      ? phase
-      : phase === "ready" || phase === "loading" || phase === "investigating"
-        ? "ready"
-        : "active";
+    phase === "resolved" || phase === "rejected" ? phase : "active";
 
   return (
     <div className="page-shell">
@@ -164,21 +185,19 @@ export default function Home() {
       </div>
 
       <main className="workspace">
-        {scenario ? (
-          <IncidentHeader
-            phase={headerPhase}
-            service={scenario.affected_service}
-            title={scenario.title}
-          />
-        ) : (
-          <IncidentHeader
-            phase="ready"
-            service="—"
-            title="OpsPilot incident demo"
-          />
-        )}
+        {phase === "ready" || phase === "loading" || phase === "investigating"
+          ? null
+          : activeScenario && (
+              <IncidentHeader
+                phase={headerPhase}
+                service={incident?.affected_service ?? activeScenario.affected_service}
+                title={activeScenario.title}
+              />
+            )}
 
-        <StoryRail phase={phase} />
+        {inIncident || phase === "investigating" ? (
+          <StoryRail phase={phase} />
+        ) : null}
 
         {error ? (
           <div className="error-banner" role="alert">
@@ -191,51 +210,90 @@ export default function Home() {
 
         {phase === "loading" ? (
           <p className="status-copy" aria-live="polite">
-            Loading demo incident…
+            Loading incidents…
           </p>
         ) : null}
 
-        {phase === "ready" && scenario ? (
-          <section className="panel briefing" aria-labelledby="briefing-heading">
-            <h2 id="briefing-heading" className="sr-only">
-              Start investigation
-            </h2>
-            <p>
-              A production incident is ready to investigate. OpsPilot will
-              collect metrics, deployments, and logs, then propose a
-              remediation. High-risk changes still require your approval.
+        {phase === "ready" ? (
+          <section className="hero" aria-labelledby="product-heading">
+            <p className="hero-brand">OpsPilot</p>
+            <h1 id="product-heading">Autonomous Production Engineering Agent</h1>
+            <p className="hero-copy">
+              Choose a production incident and watch OpsPilot investigate
+              evidence, form a hypothesis, request approval for risky
+              remediation, and verify recovery.
             </p>
-            <button
-              type="button"
-              className="button-primary"
-              onClick={() => void handleStart()}
-              disabled={busy}
+          </section>
+        ) : null}
+
+        {phase === "ready" && scenarios.length > 0 ? (
+          <section aria-labelledby="scenario-heading">
+            <h2 id="scenario-heading" className="section-heading">
+              Production incidents
+            </h2>
+            <div
+              className="scenario-grid"
+              role="radiogroup"
+              aria-label="Incident scenarios"
             >
-              Start Investigation
-            </button>
+              {scenarios.map((scenario) => (
+                <ScenarioCard
+                  key={scenario.id}
+                  scenario={scenario}
+                  selected={scenario.id === selectedScenarioId}
+                  onSelect={() => setSelectedScenarioId(scenario.id)}
+                />
+              ))}
+            </div>
+            <div className="start-row">
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => void handleStart()}
+                disabled={busy || !selectedScenario}
+              >
+                Start Investigation
+              </button>
+              {selectedScenario ? (
+                <p className="start-hint">
+                  Selected: {humanizeServiceName(selectedScenario.affected_service)}
+                </p>
+              ) : null}
+            </div>
           </section>
         ) : null}
 
         {phase === "investigating" ? (
           <p className="status-copy" aria-live="polite" aria-busy="true">
-            Investigating {scenario?.affected_service ?? "service"}…
+            Investigating{" "}
+            {selectedScenario
+              ? humanizeServiceName(selectedScenario.affected_service)
+              : "service"}
+            …
           </p>
         ) : null}
 
-        {incident &&
-        (phase === "active" || phase === "resolved" || phase === "rejected") ? (
+        {incident && inIncident ? (
           <>
             <div className="metric-grid">
               <MetricCard
                 label="p95 latency"
                 value={formatLatency(incident.metrics.p95_latency_ms)}
-                hint={phase === "resolved" || phase === "rejected" ? "At detection" : undefined}
+                hint={
+                  phase === "resolved" || phase === "rejected"
+                    ? "At detection"
+                    : undefined
+                }
                 tone="incident"
               />
               <MetricCard
                 label="Error rate"
                 value={formatErrorRate(incident.metrics.error_rate_percent)}
-                hint={phase === "resolved" || phase === "rejected" ? "At detection" : undefined}
+                hint={
+                  phase === "resolved" || phase === "rejected"
+                    ? "At detection"
+                    : undefined
+                }
                 tone="incident"
               />
             </div>
@@ -259,7 +317,18 @@ export default function Home() {
             ) : null}
 
             {approval && (phase === "resolved" || phase === "rejected") ? (
-              <RecoveryPanel original={incident.metrics} approval={approval} />
+              <>
+                <RecoveryPanel original={incident.metrics} approval={approval} />
+                <div className="reset-row">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={resetToSelection}
+                  >
+                    Investigate another incident
+                  </button>
+                </div>
+              </>
             ) : null}
           </>
         ) : null}
