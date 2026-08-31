@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from backend.app.agent.incident_response import IncidentResponseCoordinator
 from simulator.environment import SimulatedEnvironment
@@ -11,6 +12,8 @@ class IncidentSession:
     remediation_thread_id: str
     proposal_id: str
     affected_service: str
+    scenario_id: str
+    created_at: datetime
 
 
 class IncidentSessionStore:

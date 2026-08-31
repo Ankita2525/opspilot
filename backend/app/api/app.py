@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,6 +19,9 @@ from backend.app.api.schemas import (
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
+from backend.app.persistence.lifecycle import IncidentLifecyclePersistence
+from backend.app.persistence.memory import InMemoryOpsPilotRepository
+from backend.app.persistence.repository import OpsPilotRepository
 from backend.app.safety.approvals import ApprovalService
 from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.remediation import RemediationTools
@@ -24,10 +30,18 @@ from simulator.environment import SimulatedEnvironment
 from simulator.scenarios import get_scenario, list_scenarios
 
 
-def create_app(provider: ModelProvider | None = None) -> FastAPI:
+def create_app(
+    provider: ModelProvider | None = None,
+    repository: OpsPilotRepository | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> FastAPI:
     resolved_provider: ModelProvider = (
         provider if provider is not None else GroqModelProvider()
     )
+    resolved_repository: OpsPilotRepository = (
+        repository if repository is not None else InMemoryOpsPilotRepository()
+    )
+    persistence = IncidentLifecyclePersistence(resolved_repository, now=now)
     store = IncidentSessionStore()
     app = FastAPI(title="OpsPilot")
     app.add_middleware(
@@ -41,6 +55,7 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
     )
     app.state.provider = resolved_provider
     app.state.store = store
+    app.state.repository = resolved_repository
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -82,12 +97,18 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
         incident_id = scenario.id
         remediation_thread_id = f"{incident_id}-remediation"
         proposal_id = f"{incident_id}-proposal"
+        created_at = persistence.record_incident_created(
+            incident_id=incident_id,
+            scenario_id=scenario.id,
+            affected_service=scenario.affected_service,
+        )
         started = coordinator.start(
             incident_id=incident_id,
             affected_service=scenario.affected_service,
             remediation_thread_id=remediation_thread_id,
             proposal_id=proposal_id,
         )
+        persistence.record_start_result(incident_id=incident_id, started=started)
         store.put(
             incident_id,
             IncidentSession(
@@ -96,6 +117,8 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
                 remediation_thread_id=remediation_thread_id,
                 proposal_id=proposal_id,
                 affected_service=scenario.affected_service,
+                scenario_id=scenario.id,
+                created_at=created_at,
             ),
         )
         investigation = started.investigation
@@ -138,6 +161,11 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        persistence.record_resume_result(
+            incident_id=incident_id,
+            proposal_id=session.proposal_id,
+            resumed=resumed,
+        )
         return IncidentApprovalResponse(
             incident_id=incident_id,
             status=resumed.status,
