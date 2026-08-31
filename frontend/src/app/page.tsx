@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApprovalPanel } from "@/components/ApprovalPanel";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
 import { IncidentHeader } from "@/components/IncidentHeader";
+import { InspectionSection } from "@/components/InspectionSection";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
@@ -412,18 +413,26 @@ export default function Home() {
             {approval &&
             originalMetrics &&
             (phase === "resolved" || phase === "rejected") ? (
-              <>
-                <RecoveryPanel original={originalMetrics} approval={approval} />
-                <div className="reset-row">
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    onClick={resetToSelection}
-                  >
-                    Investigate another incident
-                  </button>
-                </div>
-              </>
+              <RecoveryPanel original={originalMetrics} approval={approval} />
+            ) : null}
+
+            <InspectionSection
+              symptomSummary={live.symptomSummary}
+              evidence={live.evidence}
+              incidentId={live.incidentId}
+              lifecyclePhase={headerPhase}
+            />
+
+            {phase === "resolved" || phase === "rejected" ? (
+              <div className="reset-row">
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={resetToSelection}
+                >
+                  Investigate another incident
+                </button>
+              </div>
             ) : null}
 
             {phase === "investigating" ? (

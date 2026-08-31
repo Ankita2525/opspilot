@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:parser": "node --experimental-strip-types --test src/lib/sse-parser.test.ts src/lib/live-incident.test.ts"
+    "test:parser": "node --experimental-strip-types --test src/lib/sse-parser.test.ts src/lib/live-incident.test.ts src/lib/inspection.test.ts"
   },
   "dependencies": {
     "next": "16.3.3",

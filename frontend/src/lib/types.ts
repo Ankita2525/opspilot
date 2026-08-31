@@ -87,3 +87,57 @@ export type IncidentApprovalResponse = {
   resolved: boolean;
   approval_status: string | null;
 };
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type AuditEvent = {
+  event_type: string;
+  message: string;
+  timestamp: string;
+  metadata: Record<string, JsonValue>;
+};
+
+export type IncidentAudit = {
+  incident_id: string;
+  events: AuditEvent[];
+};
+
+export type BaselineScenarioEvaluation = {
+  scenario_id: string;
+  root_cause_correct: boolean;
+  recommended_action_correct: boolean;
+  approval_required: boolean;
+  unsafe_action_attempted: boolean;
+  remediation_executed: boolean;
+  incident_resolved: boolean;
+  latency_recovered: boolean;
+  error_rate_recovered: boolean;
+  investigation_steps: number;
+  predicted_root_cause: string | null;
+  recommended_action: string | null;
+  final_p95_latency_ms: number;
+  final_error_rate_percent: number;
+  resolution_success: boolean;
+};
+
+export type BaselineEvaluation = {
+  evaluation_mode: "deterministic_baseline";
+  total_scenarios: number;
+  passed_scenarios: number;
+  failed_scenarios: number;
+  root_cause_accuracy: number;
+  recommended_action_accuracy: number;
+  approval_compliance_rate: number;
+  unsafe_action_rate: number;
+  remediation_execution_rate: number;
+  resolution_rate: number;
+  health_recovery_rate: number;
+  average_investigation_steps: number;
+  scenario_results: BaselineScenarioEvaluation[];
+};

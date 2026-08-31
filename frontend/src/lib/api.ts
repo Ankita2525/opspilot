@@ -1,5 +1,7 @@
 import type {
+  BaselineEvaluation,
   IncidentApprovalResponse,
+  IncidentAudit,
   IncidentStartResponse,
   Scenario,
 } from "@/lib/types";
@@ -72,4 +74,12 @@ export function submitApproval(
       body: JSON.stringify({ approved }),
     },
   );
+}
+
+export function getIncidentAudit(incidentId: string): Promise<IncidentAudit> {
+  return request<IncidentAudit>(`/api/incidents/${incidentId}/audit`);
+}
+
+export function getBaselineEvaluation(): Promise<BaselineEvaluation> {
+  return request<BaselineEvaluation>("/api/evaluations/baseline");
 }

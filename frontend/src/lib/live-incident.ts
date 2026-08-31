@@ -55,6 +55,11 @@ export type LiveApproval = {
   message: string;
 };
 
+export type BoundedEvidence = {
+  evidenceType: string;
+  summary: string;
+};
+
 export type LiveIncidentState = {
   lastSequence: number;
   eventCount: number;
@@ -66,6 +71,7 @@ export type LiveIncidentState = {
   metrics: Metrics | null;
   selectedSkills: string[];
   symptomSummary: string | null;
+  evidence: BoundedEvidence[];
   hypothesis: LiveHypothesis | null;
   approval: LiveApproval | null;
   investigationComplete: boolean;
@@ -84,6 +90,7 @@ export function createLiveIncidentState(): LiveIncidentState {
     metrics: null,
     selectedSkills: [],
     symptomSummary: null,
+    evidence: [],
     hypothesis: null,
     approval: null,
     investigationComplete: false,
@@ -139,6 +146,7 @@ export function applyInvestigationEvent(
       startIfPending(next, "load_skills");
       next.symptomSummary =
         readString(event.data, "symptom_summary") ?? next.symptomSummary;
+      next.evidence = readEvidence(event.data);
       break;
     case "skills_selected":
       completeStep(next, "load_skills");
@@ -277,4 +285,25 @@ function readStringArray(
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function readEvidence(data: Record<string, unknown>): BoundedEvidence[] {
+  const value = data.evidence;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const items: BoundedEvidence[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const evidenceType = record.evidence_type;
+    const summary = record.summary;
+    if (typeof evidenceType !== "string" || typeof summary !== "string") {
+      continue;
+    }
+    items.push({ evidenceType, summary });
+  }
+  return items;
 }

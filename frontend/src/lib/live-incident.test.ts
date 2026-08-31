@@ -76,3 +76,42 @@ test("completes timeline steps only after matching events", () => {
   assert.equal(state.metrics?.p95_latency_ms, 1234);
   assert.equal(state.timeline.inspect_logs, "pending");
 });
+
+test("context_built stores bounded evidence in backend order", () => {
+  let state = createLiveIncidentState();
+  state = applyInvestigationEvent(
+    state,
+    event({
+      event_type: "context_built",
+      sequence: 1,
+      data: {
+        symptom_summary:
+          "checkout-api is experiencing p95 latency of 1940 ms and error rate of 8.2%",
+        evidence: [
+          {
+            evidence_type: "log",
+            summary: "Database connection pool timeout",
+          },
+          {
+            evidence_type: "deployment",
+            summary: "Deployment v1.18.3 occurred at 13:58",
+          },
+          {
+            evidence_type: "metric",
+            summary: "p95 latency is 1940 ms and error rate is 8.2%",
+          },
+        ],
+      },
+    }),
+  );
+
+  assert.equal(
+    state.symptomSummary,
+    "checkout-api is experiencing p95 latency of 1940 ms and error rate of 8.2%",
+  );
+  assert.deepEqual(
+    state.evidence.map((item) => item.evidenceType),
+    ["log", "deployment", "metric"],
+  );
+  assert.equal(state.evidence[0]?.summary, "Database connection pool timeout");
+});
