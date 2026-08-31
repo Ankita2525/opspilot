@@ -5,7 +5,7 @@ from backend.app.agent.incident_response import (
     IncidentResponseResumeResult,
     IncidentResponseStartResult,
 )
-from backend.app.persistence.models import ApprovalRecord, AuditRecord, IncidentRecord
+from backend.app.persistence.models import AuditRecord, IncidentRecord
 from backend.app.persistence.repository import OpsPilotRepository
 
 Clock = Callable[[], datetime]
@@ -93,19 +93,6 @@ class IncidentLifecyclePersistence:
             return
         request = started.approval_request
         proposal_id = str(request["proposal_id"])
-        self._repository.save_approval(
-            ApprovalRecord(
-                proposal_id=proposal_id,
-                incident_id=incident_id,
-                action=str(request["action"]),
-                service=str(request["service"]),
-                version=_optional_str(request.get("version")),
-                risk_level=str(request["risk_level"]),
-                status="pending",
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-        )
         self._append_audit(
             incident_id=incident_id,
             event_type="approval_requested",
@@ -128,16 +115,6 @@ class IncidentLifecyclePersistence:
         approval_status = resumed.approval_status or (
             "approved" if resumed.status == "resolved" else "rejected"
         )
-        existing_approval = self._repository.get_approval(proposal_id)
-        if existing_approval is not None:
-            self._repository.save_approval(
-                existing_approval.model_copy(
-                    update={
-                        "status": approval_status,
-                        "updated_at": timestamp,
-                    }
-                )
-            )
         existing_incident = self._require_incident(incident_id)
         resolved = resumed.status == "resolved"
         self._repository.save_incident(
@@ -215,9 +192,3 @@ class IncidentLifecyclePersistence:
                 metadata=metadata,
             )
         )
-
-
-def _optional_str(value: object) -> str | None:
-    if value is None:
-        return None
-    return str(value)

@@ -82,7 +82,7 @@ def create_app(
         environment = SimulatedEnvironment()
         environment.load_scenario(scenario.id)
         diagnostics = DiagnosticTools(environment)
-        approvals = ApprovalService()
+        approvals = ApprovalService(repository=resolved_repository, now=now)
         coordinator = IncidentResponseCoordinator(
             investigation_workflow=InvestigationWorkflow(
                 tools=diagnostics,

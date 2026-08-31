@@ -61,8 +61,11 @@ class RemediationTools:
             proposal = self._approvals.get(proposal_id)
             if proposal.action != ROLLBACK_ACTION:
                 raise PermissionError("Proposal action is not rollback_deployment.")
+            policy_risk = self._policy.classify(proposal.action)
             if proposal.risk_level != RiskLevel.HIGH_RISK:
                 raise PermissionError("Proposal is not classified as HIGH_RISK.")
+            if policy_risk != proposal.risk_level:
+                raise PermissionError("Proposal risk level does not match current policy.")
             if proposal.approval_status != ApprovalStatus.APPROVED:
                 raise PermissionError("Rollback has not been approved.")
 
