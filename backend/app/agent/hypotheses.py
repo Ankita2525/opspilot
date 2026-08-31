@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.context.manager import ContextManager
+from backend.app.context.models import IncidentContext
 from backend.app.models.provider import ModelProvider
 from backend.app.observability.tracing import get_tracer
 from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
@@ -40,10 +42,32 @@ Recommend the next investigation or remediation action.
 
 
 class HypothesisEngine:
-    """Turns collected diagnostic evidence into a structured hypothesis result."""
+    """Turns bounded IncidentContext into a structured hypothesis result."""
 
-    def __init__(self, provider: ModelProvider) -> None:
+    def __init__(
+        self,
+        provider: ModelProvider,
+        context_manager: ContextManager | None = None,
+    ) -> None:
         self._provider = provider
+        self._context_manager = context_manager or ContextManager()
+
+    def build_context(
+        self,
+        *,
+        incident_id: str,
+        affected_service: str,
+        metrics: MetricResponse,
+        deployments: list[DeploymentResponse],
+        logs: list[LogResponse],
+    ) -> IncidentContext:
+        return self._context_manager.build(
+            incident_id=incident_id,
+            affected_service=affected_service,
+            metrics=metrics,
+            deployments=deployments,
+            logs=logs,
+        )
 
     def analyze(
         self,
@@ -53,16 +77,20 @@ class HypothesisEngine:
         deployments: list[DeploymentResponse],
         logs: list[LogResponse],
     ) -> HypothesisResult:
-        user_prompt = _build_user_prompt(
+        context = self.build_context(
             incident_id=incident_id,
             affected_service=affected_service,
             metrics=metrics,
             deployments=deployments,
             logs=logs,
         )
+        return self.analyze_context(context)
+
+    def analyze_context(self, context: IncidentContext) -> HypothesisResult:
+        user_prompt = _prompt_from_context(context)
         with get_tracer().start_as_current_span("opspilot.hypothesis.generate") as span:
-            span.set_attribute("opspilot.incident_id", incident_id)
-            span.set_attribute("opspilot.service", affected_service)
+            span.set_attribute("opspilot.incident_id", context.incident_id)
+            span.set_attribute("opspilot.service", context.affected_service)
             result = self._provider.generate_structured(
                 _SYSTEM_PROMPT,
                 user_prompt,
@@ -76,39 +104,30 @@ class HypothesisEngine:
             return result
 
 
-def _build_user_prompt(
-    incident_id: str,
-    affected_service: str,
-    metrics: MetricResponse,
-    deployments: list[DeploymentResponse],
-    logs: list[LogResponse],
-) -> str:
+def _prompt_from_context(context: IncidentContext) -> str:
     lines = [
-        f"Incident ID: {incident_id}",
-        f"Affected service: {affected_service}",
+        "Incident:",
+        context.incident_id,
         "",
-        "Metrics:",
-        f"- p95 latency: {metrics.p95_latency_ms} ms",
-        f"- error rate: {metrics.error_rate_percent}%",
-        f"- timestamp: {metrics.timestamp.isoformat()}",
+        "Service:",
+        context.affected_service,
         "",
-        "Recent deployments:",
+        "Symptoms:",
+        context.symptom_summary,
+        "",
+        "Recent changes:",
     ]
-    if deployments:
-        for event in deployments:
-            lines.append(
-                f"- {event.service} {event.version} at {event.timestamp.isoformat()}"
-            )
+    if context.recent_changes:
+        for item in context.recent_changes:
+            lines.append(f"- {item.summary}")
     else:
         lines.append("- none")
 
     lines.append("")
-    lines.append("Logs:")
-    if logs:
-        for event in logs:
-            lines.append(
-                f"- [{event.level}] {event.timestamp.isoformat()} {event.message}"
-            )
+    lines.append("Ranked evidence:")
+    if context.evidence:
+        for item in context.evidence:
+            lines.append(f"- {item.summary}")
     else:
         lines.append("- none")
 

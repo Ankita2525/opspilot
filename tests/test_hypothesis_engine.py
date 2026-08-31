@@ -113,6 +113,20 @@ def test_prompt_does_not_include_expected_remediation() -> None:
     assert "rollback_deployment" not in prompt
 
 
+def test_prompt_is_built_from_incident_context() -> None:
+    _, provider, _ = _analyze()
+    prompt = provider.recorded_prompt()
+
+    assert "Incident:" in prompt
+    assert INCIDENT_ID in prompt
+    assert "Service:" in prompt
+    assert "Symptoms:" in prompt
+    assert "p95 latency of 1940 ms" in prompt
+    assert "Recent changes:" in prompt
+    assert "Ranked evidence:" in prompt
+    assert "ERROR:" in prompt
+
+
 def test_analysis_does_not_mutate_or_resolve_incident() -> None:
     environment, _, _ = _analyze()
 

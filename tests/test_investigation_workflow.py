@@ -150,6 +150,8 @@ def test_hypothesis_receives_collected_evidence() -> None:
     assert "8.2" in prompt
     assert BAD_VERSION in prompt
     assert "database connection pool timeout" in prompt.lower()
+    assert "Symptoms:" in prompt
+    assert "Ranked evidence:" in prompt
 
 
 def test_hypothesis_prompt_does_not_leak_simulator_ground_truth() -> None:
@@ -188,3 +190,20 @@ def test_environment_remains_unchanged_after_investigation() -> None:
     assert environment.get_recent_deployments(SERVICE) == before_deployments
     assert after_metrics.p95_latency_ms == 1940
     assert after_metrics.error_rate_percent == 8.2
+
+
+def test_workflow_stores_incident_context_used_for_hypothesis() -> None:
+    _, workflow, provider = _loaded_workflow()
+
+    result = workflow.run(INCIDENT_ID, SERVICE)
+    context = result["incident_context"]
+
+    assert context is not None
+    assert context.incident_id == INCIDENT_ID
+    assert context.affected_service == SERVICE
+    assert "1940" in context.symptom_summary
+    assert any("v1.18.3" in item.summary for item in context.evidence)
+    prompt = provider.recorded_prompt()
+    assert context.symptom_summary in prompt
+    for item in context.evidence:
+        assert item.summary in prompt

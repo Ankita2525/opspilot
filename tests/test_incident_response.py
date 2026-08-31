@@ -112,6 +112,7 @@ class _InvestigationStub:
                     message="database connection pool timeout",
                 )
             ],
+            "incident_context": None,
             "hypothesis_result": HypothesisResult(
                 hypotheses=[
                     RootCauseHypothesis(

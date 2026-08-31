@@ -26,6 +26,7 @@ class InvestigationWorkflow:
             "metrics": None,
             "deployments": [],
             "logs": [],
+            "incident_context": None,
             "hypothesis_result": None,
             "completed_steps": [],
             "status": "in_progress",
@@ -80,14 +81,16 @@ class InvestigationWorkflow:
         if not state["logs"]:
             raise ValueError("Cannot generate a hypothesis before logs are collected.")
 
-        hypothesis_result = self._hypothesis_engine.analyze(
+        context = self._hypothesis_engine.build_context(
             incident_id=state["incident_id"],
             affected_service=state["affected_service"],
             metrics=metrics,
             deployments=state["deployments"],
             logs=state["logs"],
         )
+        hypothesis_result = self._hypothesis_engine.analyze_context(context)
         return {
+            "incident_context": context,
             "hypothesis_result": hypothesis_result,
             "completed_steps": [*state["completed_steps"], "generate_hypothesis"],
         }
