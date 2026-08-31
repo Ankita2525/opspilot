@@ -1,0 +1,33 @@
+from typing import Protocol, runtime_checkable
+
+from backend.app.persistence.models import (
+    ApprovalRecord,
+    AuditRecord,
+    EvaluationRecord,
+    IncidentRecord,
+)
+
+
+@runtime_checkable
+class OpsPilotRepository(Protocol):
+    """Persistence contract for incident, approval, audit, and evaluation records."""
+
+    def save_incident(self, record: IncidentRecord) -> None: ...
+
+    def get_incident(self, incident_id: str) -> IncidentRecord | None: ...
+
+    def list_incidents(self) -> list[IncidentRecord]: ...
+
+    def save_approval(self, record: ApprovalRecord) -> None: ...
+
+    def get_approval(self, proposal_id: str) -> ApprovalRecord | None: ...
+
+    def list_approvals(self, incident_id: str) -> list[ApprovalRecord]: ...
+
+    def append_audit(self, record: AuditRecord) -> None: ...
+
+    def list_audit_events(self, incident_id: str) -> list[AuditRecord]: ...
+
+    def save_evaluation(self, record: EvaluationRecord) -> None: ...
+
+    def list_evaluations(self, incident_id: str) -> list[EvaluationRecord]: ...
