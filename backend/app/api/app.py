@@ -1,8 +1,10 @@
+import os
 from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from backend.app.agent.hypotheses import HypothesisEngine
 from backend.app.agent.incident_response import IncidentResponseCoordinator
@@ -19,8 +21,10 @@ from backend.app.api.schemas import (
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
+from backend.app.observability.tracing import get_tracer
 from backend.app.persistence.lifecycle import IncidentLifecyclePersistence
 from backend.app.persistence.memory import InMemoryOpsPilotRepository
+from backend.app.persistence.models import ApprovalRecord, IncidentRecord
 from backend.app.persistence.repository import OpsPilotRepository
 from backend.app.safety.approvals import ApprovalService
 from backend.app.tools.diagnostics import DiagnosticTools
@@ -29,12 +33,16 @@ from backend.app.tools.schemas import MetricResponse
 from simulator.environment import SimulatedEnvironment
 from simulator.scenarios import get_scenario, list_scenarios
 
+RESUMABLE_INCIDENT_STATUS = "approval_required"
+
 
 def create_app(
     provider: ModelProvider | None = None,
     repository: OpsPilotRepository | None = None,
     now: Callable[[], datetime] | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> FastAPI:
+    os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
     resolved_provider: ModelProvider = (
         provider if provider is not None else GroqModelProvider()
     )
@@ -56,6 +64,28 @@ def create_app(
     app.state.provider = resolved_provider
     app.state.store = store
     app.state.repository = resolved_repository
+    app.state.checkpointer = checkpointer
+
+    def _runtime_for_scenario(
+        scenario_id: str,
+    ) -> tuple[SimulatedEnvironment, IncidentResponseCoordinator]:
+        environment = SimulatedEnvironment()
+        environment.load_scenario(scenario_id)
+        diagnostics = DiagnosticTools(environment)
+        approvals = ApprovalService(repository=resolved_repository, now=now)
+        coordinator = IncidentResponseCoordinator(
+            investigation_workflow=InvestigationWorkflow(
+                tools=diagnostics,
+                hypothesis_engine=HypothesisEngine(resolved_provider),
+            ),
+            remediation_workflow=RemediationApprovalWorkflow(
+                remediation_tools=RemediationTools(environment, approvals),
+                approvals=approvals,
+                diagnostic_tools=diagnostics,
+                checkpointer=checkpointer,
+            ),
+        )
+        return environment, coordinator
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -79,23 +109,9 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        environment = SimulatedEnvironment()
-        environment.load_scenario(scenario.id)
-        diagnostics = DiagnosticTools(environment)
-        approvals = ApprovalService(repository=resolved_repository, now=now)
-        coordinator = IncidentResponseCoordinator(
-            investigation_workflow=InvestigationWorkflow(
-                tools=diagnostics,
-                hypothesis_engine=HypothesisEngine(resolved_provider),
-            ),
-            remediation_workflow=RemediationApprovalWorkflow(
-                remediation_tools=RemediationTools(environment, approvals),
-                approvals=approvals,
-                diagnostic_tools=diagnostics,
-            ),
-        )
+        environment, coordinator = _runtime_for_scenario(scenario.id)
         incident_id = scenario.id
-        remediation_thread_id = f"{incident_id}-remediation"
+        remediation_thread_id = incident_id
         proposal_id = f"{incident_id}-proposal"
         created_at = persistence.record_incident_created(
             incident_id=incident_id,
@@ -153,7 +169,14 @@ def create_app(
         incident_id: str,
         body: SubmitApprovalRequest,
     ) -> IncidentApprovalResponse:
-        session = _require_session(store, incident_id)
+        session = store.get_optional(incident_id)
+        if session is None:
+            session = _reconstruct_approval_session(
+                incident_id=incident_id,
+                store=store,
+                repository=resolved_repository,
+                runtime_factory=_runtime_for_scenario,
+            )
         try:
             resumed = session.coordinator.resume(
                 remediation_thread_id=session.remediation_thread_id,
@@ -197,3 +220,70 @@ def _require_session(
         return store.get(incident_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _reconstruct_approval_session(
+    *,
+    incident_id: str,
+    store: IncidentSessionStore,
+    repository: OpsPilotRepository,
+    runtime_factory: Callable[
+        [str], tuple[SimulatedEnvironment, IncidentResponseCoordinator]
+    ],
+) -> IncidentSession:
+    with get_tracer().start_as_current_span("opspilot.checkpoint.resume") as span:
+        span.set_attribute("opspilot.incident_id", incident_id)
+        record = repository.get_incident(incident_id)
+        if record is None:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown incident: {incident_id}"
+            )
+        _require_resumable_incident(record)
+        approval = _require_pending_approval(repository, incident_id)
+        try:
+            environment, coordinator = runtime_factory(record.scenario_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        thread_id = incident_id
+        try:
+            coordinator.pending_interrupt(remediation_thread_id=thread_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No resumable approval checkpoint for incident {incident_id}",
+            ) from exc
+        session = IncidentSession(
+            environment=environment,
+            coordinator=coordinator,
+            remediation_thread_id=thread_id,
+            proposal_id=approval.proposal_id,
+            affected_service=record.affected_service,
+            scenario_id=record.scenario_id,
+            created_at=record.created_at,
+        )
+        store.put(incident_id, session)
+        return session
+
+
+def _require_resumable_incident(record: IncidentRecord) -> None:
+    if record.status != RESUMABLE_INCIDENT_STATUS or record.resolved:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Incident cannot be resumed from status: {record.status}",
+        )
+
+
+def _require_pending_approval(
+    repository: OpsPilotRepository, incident_id: str
+) -> ApprovalRecord:
+    pending = [
+        item
+        for item in repository.list_approvals(incident_id)
+        if item.status == "pending"
+    ]
+    if len(pending) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Incident is not awaiting a pending approval.",
+        )
+    return pending[0]

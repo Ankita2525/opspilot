@@ -133,11 +133,21 @@ class IncidentResponseCoordinator:
         remediation_thread_id: str,
         approved: bool,
     ) -> IncidentResponseResumeResult:
-        result = self._remediation_workflow.resume(
-            thread_id=remediation_thread_id,
-            approved=approved,
-        )
-        return IncidentResponseResumeResult.model_validate(result)
+        with get_tracer().start_as_current_span(
+            "opspilot.incident_response.resume"
+        ) as span:
+            span.set_attribute("opspilot.thread_id", remediation_thread_id)
+            span.set_attribute("opspilot.approved", approved)
+            result = self._remediation_workflow.resume(
+                thread_id=remediation_thread_id,
+                approved=approved,
+            )
+            resumed = IncidentResponseResumeResult.model_validate(result)
+            span.set_attribute("opspilot.status", resumed.status)
+            return resumed
+
+    def pending_interrupt(self, *, remediation_thread_id: str) -> dict:
+        return self._remediation_workflow.pending_interrupt(remediation_thread_id)
 
 
 def _most_recent_deployment_version(

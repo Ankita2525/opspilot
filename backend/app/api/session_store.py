@@ -26,10 +26,16 @@ class IncidentSessionStore:
         self._sessions[incident_id] = session
 
     def get(self, incident_id: str) -> IncidentSession:
-        try:
-            return self._sessions[incident_id]
-        except KeyError as exc:
-            raise ValueError(f"Unknown incident: {incident_id}") from exc
+        session = self.get_optional(incident_id)
+        if session is None:
+            raise ValueError(f"Unknown incident: {incident_id}")
+        return session
+
+    def get_optional(self, incident_id: str) -> IncidentSession | None:
+        return self._sessions.get(incident_id)
+
+    def has(self, incident_id: str) -> bool:
+        return incident_id in self._sessions
 
     def remove(self, incident_id: str) -> None:
         try:

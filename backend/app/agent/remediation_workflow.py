@@ -1,6 +1,8 @@
 from typing import TypedDict, cast
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -29,11 +31,12 @@ class RemediationApprovalWorkflow:
         remediation_tools: RemediationTools,
         approvals: ApprovalService,
         diagnostic_tools: DiagnosticTools,
+        checkpointer: BaseCheckpointSaver | None = None,
     ) -> None:
         self._remediation_tools = remediation_tools
         self._approvals = approvals
         self._diagnostic_tools = diagnostic_tools
-        self._checkpointer = InMemorySaver()
+        self._checkpointer = _configure_checkpointer(checkpointer)
         self._graph = self._build_graph()
 
     def start(
@@ -152,3 +155,18 @@ class RemediationApprovalWorkflow:
             "execution_success": False,
             "status": "rejected",
         }
+
+
+def _strict_checkpoint_serde() -> JsonPlusSerializer:
+    """Restrict checkpoint deserialization to LangGraph's safe MessagePack types."""
+    return JsonPlusSerializer(allowed_msgpack_modules=None)
+
+
+def _configure_checkpointer(
+    checkpointer: BaseCheckpointSaver | None,
+) -> BaseCheckpointSaver:
+    serde = _strict_checkpoint_serde()
+    if checkpointer is None:
+        return InMemorySaver(serde=serde)
+    checkpointer.serde = serde
+    return checkpointer

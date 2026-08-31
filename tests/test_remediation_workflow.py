@@ -345,3 +345,38 @@ def test_rejected_rollback_leaves_each_scenario_degraded(
     assert metrics.p95_latency_ms == incident_p95
     assert metrics.error_rate_percent == incident_error
     assert environment.get_service_health(service).healthy is False
+
+
+def test_default_checkpointer_is_in_memory() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    _, _, workflow = _loaded()
+
+    assert isinstance(workflow._checkpointer, InMemorySaver)
+
+
+def test_supplied_checkpointer_is_used() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    environment = SimulatedEnvironment()
+    environment.load_scenario(SCENARIO_ID)
+    approvals = ApprovalService()
+    saver = InMemorySaver()
+    workflow = RemediationApprovalWorkflow(
+        remediation_tools=RemediationTools(environment, approvals),
+        approvals=approvals,
+        diagnostic_tools=DiagnosticTools(environment),
+        checkpointer=saver,
+    )
+
+    assert workflow._checkpointer is saver
+    _start(workflow)
+    checkpoint = saver.get_tuple({"configurable": {"thread_id": THREAD_ID}})
+    assert checkpoint is not None
+
+
+def test_checkpointer_uses_strict_msgpack_deserialization() -> None:
+    _, _, workflow = _loaded()
+
+    assert workflow._checkpointer.serde._allowed_msgpack_modules is None
+
