@@ -1,0 +1,10 @@
+[project]
+name = "opspilot"
+version = "0.1.0"
+description = "Autonomous production engineering agent"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
