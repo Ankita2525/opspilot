@@ -13,6 +13,10 @@ from backend.app.persistence.models import (
     IncidentRecord,
     JsonValue,
 )
+from backend.app.security.untrusted_text import (
+    sanitize_public_instance,
+    sanitize_public_text,
+)
 
 FORBIDDEN_METADATA_KEYS = frozenset(
     {
@@ -30,27 +34,16 @@ FORBIDDEN_METADATA_KEYS = frozenset(
     }
 )
 
-FORBIDDEN_VALUE_TOKENS = (
-    "known_root_cause",
-    "expected_remediation",
-    "chain_of_thought",
-    "chain-of-thought",
-    "GROQ_API_KEY",
-    "DATABASE_URL",
-    "system_prompt",
-    "user_prompt",
-    "Traceback",
-    "You are OpsPilot",
-)
-
 
 def public_incident_audit(
     incident_id: str, records: list[AuditRecord]
 ) -> IncidentAuditResponse:
     ordered = sorted(records, key=lambda item: (item.timestamp, item.audit_id))
-    return IncidentAuditResponse(
-        incident_id=incident_id,
-        events=[_public_audit_event(item) for item in ordered],
+    return sanitize_public_instance(
+        IncidentAuditResponse(
+            incident_id=incident_id,
+            events=[_public_audit_event(item) for item in ordered],
+        )
     )
 
 
@@ -58,37 +51,41 @@ def public_incident_summary(
     record: IncidentRecord,
     approvals: list[ApprovalRecord],
 ) -> IncidentSummaryResponse:
-    return IncidentSummaryResponse(
-        incident_id=record.incident_id,
-        scenario_id=record.scenario_id,
-        affected_service=record.affected_service,
-        status=record.status,
-        selected_skills=list(record.selected_skills),
-        recommended_action=record.recommended_action,
-        resolved=record.resolved,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-        approval=_public_approval_summary(approvals),
+    return sanitize_public_instance(
+        IncidentSummaryResponse(
+            incident_id=record.incident_id,
+            scenario_id=record.scenario_id,
+            affected_service=record.affected_service,
+            status=record.status,
+            selected_skills=list(record.selected_skills),
+            recommended_action=record.recommended_action,
+            resolved=record.resolved,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            approval=_public_approval_summary(approvals),
+        )
     )
 
 
 def public_baseline_evaluation(
     result: EvaluationSuiteResult,
 ) -> BaselineEvaluationResponse:
-    return BaselineEvaluationResponse(
-        evaluation_mode="deterministic_baseline",
-        total_scenarios=result.total_scenarios,
-        passed_scenarios=result.passed_scenarios,
-        failed_scenarios=result.failed_scenarios,
-        root_cause_accuracy=result.root_cause_accuracy,
-        recommended_action_accuracy=result.recommended_action_accuracy,
-        approval_compliance_rate=result.approval_compliance_rate,
-        unsafe_action_rate=result.unsafe_action_rate,
-        remediation_execution_rate=result.remediation_execution_rate,
-        resolution_rate=result.resolution_rate,
-        health_recovery_rate=result.health_recovery_rate,
-        average_investigation_steps=result.average_investigation_steps,
-        scenario_results=[_public_scenario_evaluation(item) for item in result.scenario_results],
+    return sanitize_public_instance(
+        BaselineEvaluationResponse(
+            evaluation_mode="deterministic_baseline",
+            total_scenarios=result.total_scenarios,
+            passed_scenarios=result.passed_scenarios,
+            failed_scenarios=result.failed_scenarios,
+            root_cause_accuracy=result.root_cause_accuracy,
+            recommended_action_accuracy=result.recommended_action_accuracy,
+            approval_compliance_rate=result.approval_compliance_rate,
+            unsafe_action_rate=result.unsafe_action_rate,
+            remediation_execution_rate=result.remediation_execution_rate,
+            resolution_rate=result.resolution_rate,
+            health_recovery_rate=result.health_recovery_rate,
+            average_investigation_steps=result.average_investigation_steps,
+            scenario_results=[_public_scenario_evaluation(item) for item in result.scenario_results],
+        )
     )
 
 
@@ -102,8 +99,8 @@ def sanitize_audit_metadata(value: JsonValue) -> JsonValue:
         return cleaned
     if isinstance(value, list):
         return [sanitize_audit_metadata(item) for item in value]
-    if isinstance(value, str) and _leaks_secret(value):
-        return "[redacted]"
+    if isinstance(value, str):
+        return sanitize_public_text(value)
     return value
 
 
@@ -113,7 +110,7 @@ def _public_audit_event(record: AuditRecord) -> AuditEventResponse:
         metadata = {}
     return AuditEventResponse(
         event_type=record.event_type,
-        message=record.message,
+        message=sanitize_public_text(record.message),
         timestamp=record.timestamp,
         metadata=metadata,
     )
@@ -162,7 +159,3 @@ def _forbidden_metadata_key(key: str) -> bool:
     if normalized in {item.replace("-", "_") for item in FORBIDDEN_METADATA_KEYS}:
         return True
     return "prompt" in normalized or "traceback" in normalized
-
-
-def _leaks_secret(value: str) -> bool:
-    return any(token in value for token in FORBIDDEN_VALUE_TOKENS)

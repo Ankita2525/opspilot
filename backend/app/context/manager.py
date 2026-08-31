@@ -1,5 +1,6 @@
 from backend.app.context.models import EvidenceItem, EvidenceType, IncidentContext
 from backend.app.observability.tracing import get_tracer
+from backend.app.security.untrusted_text import prepare_untrusted_text
 from backend.app.tools.schemas import DeploymentResponse, LogResponse, MetricResponse
 
 CONTEXT_VERSION = 1
@@ -69,24 +70,29 @@ class ContextManager:
 
 
 def _symptom_summary(affected_service: str, metrics: MetricResponse) -> str:
-    return (
+    summary = (
         f"{affected_service} is experiencing p95 latency of "
         f"{metrics.p95_latency_ms} ms and an error rate of "
         f"{metrics.error_rate_percent}%."
     )
+    safe, _ = prepare_untrusted_text(summary)
+    return safe
 
 
 def _metric_evidence(affected_service: str, metrics: MetricResponse) -> EvidenceItem:
+    summary, suspicious = prepare_untrusted_text(
+        f"p95 latency is {metrics.p95_latency_ms} ms and error rate is "
+        f"{metrics.error_rate_percent}%."
+    )
+    source, _ = prepare_untrusted_text(affected_service)
     return EvidenceItem(
         evidence_id=f"metric-{affected_service}",
         evidence_type=EvidenceType.METRIC,
-        source=affected_service,
-        summary=(
-            f"p95 latency is {metrics.p95_latency_ms} ms and error rate is "
-            f"{metrics.error_rate_percent}%."
-        ),
+        source=source,
+        summary=summary,
         relevance_score=METRIC_RELEVANCE,
         timestamp=metrics.timestamp,
+        suspicious_instruction_content=suspicious,
     )
 
 
@@ -99,17 +105,20 @@ def _deployment_evidence(
         relevance = (
             DEPLOYMENT_RELEVANCE_RECENT if index == 0 else DEPLOYMENT_RELEVANCE_OLDER
         )
+        summary, suspicious = prepare_untrusted_text(
+            f"Deployment {event.version} occurred at "
+            f"{event.timestamp.strftime('%H:%M')}."
+        )
+        source, _ = prepare_untrusted_text(event.service)
         items.append(
             EvidenceItem(
                 evidence_id=f"deployment-{event.service}-{event.version}",
                 evidence_type=EvidenceType.DEPLOYMENT,
-                source=event.service,
-                summary=(
-                    f"Deployment {event.version} occurred at "
-                    f"{event.timestamp.strftime('%H:%M')}."
-                ),
+                source=source,
+                summary=summary,
                 relevance_score=relevance,
                 timestamp=event.timestamp,
+                suspicious_instruction_content=suspicious,
             )
         )
     return items
@@ -118,14 +127,19 @@ def _deployment_evidence(
 def _log_evidence(affected_service: str, logs: list[LogResponse]) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     for index, event in enumerate(logs):
+        summary, suspicious = prepare_untrusted_text(
+            f"{event.level}: {event.message}"
+        )
+        source, _ = prepare_untrusted_text(event.service)
         items.append(
             EvidenceItem(
                 evidence_id=f"log-{affected_service}-{index}",
                 evidence_type=EvidenceType.LOG,
-                source=event.service,
-                summary=f"{event.level}: {event.message}",
+                source=source,
+                summary=summary,
                 relevance_score=_log_relevance(event.level, event.message),
                 timestamp=event.timestamp,
+                suspicious_instruction_content=suspicious,
             )
         )
     return items

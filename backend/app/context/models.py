@@ -19,6 +19,7 @@ class EvidenceItem(BaseModel):
     summary: str
     relevance_score: float = Field(ge=0, le=1)
     timestamp: datetime | None = None
+    suspicious_instruction_content: bool = False
 
 
 class IncidentContext(BaseModel):

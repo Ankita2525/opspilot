@@ -38,6 +38,7 @@ from backend.app.persistence.memory import InMemoryOpsPilotRepository
 from backend.app.persistence.models import ApprovalRecord, IncidentRecord
 from backend.app.persistence.repository import OpsPilotRepository
 from backend.app.safety.approvals import ApprovalService
+from backend.app.security.untrusted_text import sanitize_public_instance
 from backend.app.tools.diagnostics import DiagnosticTools
 from backend.app.tools.remediation import RemediationTools
 from backend.app.tools.schemas import MetricResponse
@@ -166,20 +167,22 @@ def create_app(
                 status_code=500,
                 detail="Investigation completed without metrics or a hypothesis.",
             )
-        return IncidentStartResponse(
-            incident_id=started.incident_id,
-            scenario_id=scenario.id,
-            affected_service=started.affected_service,
-            status=started.status,
-            investigation_status=investigation["status"],
-            investigation_steps=list(investigation["completed_steps"]),
-            metrics=metrics,
-            hypothesis_result=hypothesis_result,
-            recommended_action=started.recommended_action,
-            proposed_version=started.proposed_version,
-            approval_request=started.approval_request,
-            resolved=False,
-            selected_skills=list(investigation.get("selected_skills") or []),
+        return sanitize_public_instance(
+            IncidentStartResponse(
+                incident_id=started.incident_id,
+                scenario_id=scenario.id,
+                affected_service=started.affected_service,
+                status=started.status,
+                investigation_status=investigation["status"],
+                investigation_steps=list(investigation["completed_steps"]),
+                metrics=metrics,
+                hypothesis_result=hypothesis_result,
+                recommended_action=started.recommended_action,
+                proposed_version=started.proposed_version,
+                approval_request=started.approval_request,
+                resolved=False,
+                selected_skills=list(investigation.get("selected_skills") or []),
+            )
         )
 
     @app.post("/api/incidents/stream")
@@ -226,14 +229,16 @@ def create_app(
             proposal_id=session.proposal_id,
             resumed=resumed,
         )
-        return IncidentApprovalResponse(
-            incident_id=incident_id,
-            status=resumed.status,
-            execution_success=resumed.execution_success,
-            recovered_p95_latency_ms=resumed.recovered_p95_latency_ms,
-            recovered_error_rate_percent=resumed.recovered_error_rate_percent,
-            resolved=resumed.status == "resolved",
-            approval_status=resumed.approval_status,
+        return sanitize_public_instance(
+            IncidentApprovalResponse(
+                incident_id=incident_id,
+                status=resumed.status,
+                execution_success=resumed.execution_success,
+                recovered_p95_latency_ms=resumed.recovered_p95_latency_ms,
+                recovered_error_rate_percent=resumed.recovered_error_rate_percent,
+                resolved=resumed.status == "resolved",
+                approval_status=resumed.approval_status,
+            )
         )
 
     @app.get(

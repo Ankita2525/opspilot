@@ -38,10 +38,10 @@ SKILL_NAMES = (
     AUTH_SKILL,
     EXTERNAL_SKILL,
 )
-DEPLOYMENT_TITLE = "Skill: Deployment Regression"
-POSTGRES_TITLE = "Skill: PostgreSQL Diagnostics"
-AUTH_TITLE = "Skill: Authentication Failure"
-EXTERNAL_TITLE = "Skill: External API Failure"
+DEPLOYMENT_TITLE = "Deployment Regression"
+POSTGRES_TITLE = "PostgreSQL Diagnostics"
+AUTH_TITLE = "Authentication Failure"
+EXTERNAL_TITLE = "External API Failure"
 POSTGRES_GUIDANCE = (
     "Distinguish pool exhaustion from general database unavailability"
 )
@@ -246,7 +246,7 @@ def test_checkout_prompt_contains_only_selected_skills() -> None:
     assert AUTH_TITLE not in prompt
     assert EXTERNAL_TITLE not in prompt
     assert POSTGRES_GUIDANCE in prompt
-    assert "Relevant diagnostic skills:" in prompt
+    assert "trusted diagnostic skill procedure text" in prompt
 
 
 def test_checkout_prompt_excludes_authentication_failure_guidance() -> None:

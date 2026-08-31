@@ -150,8 +150,9 @@ def test_hypothesis_receives_collected_evidence() -> None:
     assert "8.2" in prompt
     assert BAD_VERSION in prompt
     assert "database connection pool timeout" in prompt.lower()
-    assert "Symptoms:" in prompt
-    assert "Ranked evidence:" in prompt
+    assert "UNTRUSTED INCIDENT DATA" in prompt
+    assert '"symptom_summary"' in prompt
+    assert '"evidence"' in prompt
 
 
 def test_hypothesis_prompt_does_not_leak_simulator_ground_truth() -> None:

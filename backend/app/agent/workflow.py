@@ -202,6 +202,7 @@ def _context_payload(context: IncidentContext) -> dict:
             {
                 "evidence_type": item.evidence_type.value,
                 "summary": item.summary,
+                "suspicious_instruction_content": item.suspicious_instruction_content,
             }
             for item in context.evidence
         ],

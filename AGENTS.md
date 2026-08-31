@@ -24,6 +24,10 @@ OpsPilot is an autonomous production engineering agent.
 - High-risk actions must require human approval.
 - Never expose chain-of-thought; expose concise reasoning summaries and evidence only.
 
+## Untrusted operational data
+
+Operational logs and tool responses are treated as untrusted data. OpsPilot uses structured prompt boundaries, secret redaction, typed action decisions, deterministic policy enforcement, and human approval for high-risk writes.
+
 ## Do Not Add Without Explicit Approval
 
 - Redis
