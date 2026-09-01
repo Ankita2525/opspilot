@@ -80,6 +80,8 @@ def _hardening(settings: OpsPilotSettings) -> SandboxHardening:
         lease_ttl_seconds=settings.lease_ttl_seconds,
         incident_ttl_seconds=settings.incident_ttl_seconds,
         session_cookie_secure=False,
+        session_cookie_samesite="lax",
+        session_cookie_domain=None,
         cleanup_interval_seconds=30.0,
     )
 
