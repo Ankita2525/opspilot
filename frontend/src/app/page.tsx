@@ -10,7 +10,7 @@ import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
 import { ScenarioCard } from "@/components/ScenarioCard";
-import { getRuntimeSummary, getScenarios, submitApproval } from "@/lib/api";
+import { getRuntimeSummary, getSandboxStatus, getScenarios, submitApproval } from "@/lib/api";
 import { streamIncident } from "@/lib/incident-stream";
 import {
   formatErrorRate,
@@ -34,7 +34,10 @@ type Phase =
   | "complete"
   | "resolved"
   | "rejected"
-  | "failed";
+  | "failed"
+  | "blocked"
+  | "sandbox_busy"
+  | "capacity_exhausted";
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -48,6 +51,7 @@ export default function Home() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sandboxState, setSandboxState] = useState<string | null>(null);
   const [telemetryMode, setTelemetryMode] = useState<string>("reference");
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
@@ -97,9 +101,10 @@ export default function Home() {
 
     async function loadOnMount() {
       try {
-        const [loaded, runtime] = await Promise.all([
+        const [loaded, runtime, status] = await Promise.all([
           getScenarios(),
           getRuntimeSummary().catch(() => null),
+          getSandboxStatus().catch(() => null),
         ]);
         if (cancelled) {
           return;
@@ -111,6 +116,9 @@ export default function Home() {
         setSelectedScenarioId(loaded[0].id);
         if (runtime?.telemetry_mode) {
           setTelemetryMode(runtime.telemetry_mode);
+        }
+        if (status?.state) {
+          setSandboxState(status.state);
         }
         setPhase("ready");
       } catch (cause) {
@@ -170,6 +178,11 @@ export default function Home() {
           if (event.event_type === "incident_failed") {
             setError(STREAM_FAILURE_MESSAGE);
             setPhase("failed");
+            setBusy(false);
+          }
+          if (event.event_type === "investigation_blocked") {
+            setError("Investigation blocked — telemetry unavailable for live mode.");
+            setPhase("blocked");
             setBusy(false);
           }
         },
@@ -260,7 +273,22 @@ export default function Home() {
     | "resolved"
     | "rejected"
     | "failed" =
-    phase === "ready" || phase === "loading" ? "investigating" : phase;
+    phase === "ready" || phase === "loading"
+      ? "investigating"
+      : phase === "blocked" ||
+          phase === "sandbox_busy" ||
+          phase === "capacity_exhausted"
+        ? "failed"
+        : phase;
+  const sandboxBanner =
+    sandboxState === "sandbox_busy"
+      ? "Live sandbox is busy — another session is active."
+      : sandboxState === "ai_provider_unavailable" ||
+          sandboxState === "ai_capacity_exhausted"
+        ? "Live AI capacity is temporarily unavailable."
+        : sandboxState === "live_environment_offline"
+          ? "Live environment is offline."
+          : null;
   const service =
     live?.affectedService ??
     activeScenario?.affected_service ??
@@ -322,6 +350,12 @@ export default function Home() {
           <p className="status-copy" aria-live="polite">
             Loading incidents…
           </p>
+        ) : null}
+
+        {sandboxBanner && phase === "ready" ? (
+          <div className="error-banner" role="status">
+            <p>{sandboxBanner}</p>
+          </div>
         ) : null}
 
         {phase === "ready" ? (
