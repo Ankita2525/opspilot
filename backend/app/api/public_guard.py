@@ -4,43 +4,51 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, Request, Response
 
+from backend.app.api.trusted_proxy import client_ip as resolve_client_ip
 from backend.app.observability.metrics import lease_failures, live_incidents_started
 from backend.app.quotas.guard import QuotaExceeded, RateLimitExceeded
 from backend.app.sandbox.hardening import SandboxHardening
 from backend.app.session.models import SESSION_COOKIE_NAME, DemoSession
 
+if False:  # TYPE_CHECKING without import cycle
+    from backend.app.config import OpsPilotSettings
 
-def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client is not None:
-        return request.client.host
-    return "unknown"
+
+def client_ip(request: Request, settings: object | None = None) -> str:
+    return resolve_client_ip(request, settings)  # type: ignore[arg-type]
 
 
 def resolve_demo_session(
     request: Request,
     hardening: SandboxHardening,
     response: Response | None = None,
+    settings: object | None = None,
 ) -> DemoSession:
     cookie_id = request.cookies.get(SESSION_COOKIE_NAME)
     session = hardening.session_store.get_or_create(cookie_id)
     if response is not None and cookie_id != session.session_id:
-        response.set_cookie(
-            key=SESSION_COOKIE_NAME,
-            value=session.session_id,
-            httponly=True,
-            secure=hardening.session_cookie_secure,
-            samesite="lax",
-            max_age=86400 * 7,
-        )
+        cookie_kwargs: dict[str, object] = {
+            "key": SESSION_COOKIE_NAME,
+            "value": session.session_id,
+            "httponly": True,
+            "secure": hardening.session_cookie_secure,
+            "samesite": hardening.session_cookie_samesite,
+            "max_age": 86400 * 7,
+            "path": "/",
+        }
+        if hardening.session_cookie_domain:
+            cookie_kwargs["domain"] = hardening.session_cookie_domain
+        response.set_cookie(**cookie_kwargs)  # type: ignore[arg-type]
     return session
 
 
-def check_rate_limit(request: Request, hardening: SandboxHardening) -> None:
+def check_rate_limit(
+    request: Request,
+    hardening: SandboxHardening,
+    settings: object | None = None,
+) -> None:
     try:
-        hardening.quota_guard.check_ip_burst(client_ip(request))
+        hardening.quota_guard.check_ip_burst(client_ip(request, settings))
     except RateLimitExceeded as exc:
         raise HTTPException(
             status_code=429,
@@ -56,10 +64,11 @@ def verify_turnstile(
     token: str | None,
     request: Request,
     hardening: SandboxHardening,
+    settings: object | None = None,
 ) -> None:
     if not hardening.enforce_live_guards:
         return
-    if not hardening.turnstile.verify(token, remote_ip=client_ip(request)):
+    if not hardening.turnstile.verify(token, remote_ip=client_ip(request, settings)):
         raise HTTPException(
             status_code=403,
             detail={"error": "turnstile_verification_failed"},
@@ -74,6 +83,11 @@ def acquire_global_lease(
 ) -> None:
     if not hardening.enforce_live_guards:
         return
+    if hardening.lease_store.is_quarantined():
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "sandbox_cleanup_failed", "state": "quarantined"},
+        )
     try:
         hardening.quota_guard.check_session_live_incident_limit(
             session.session_id,
@@ -90,6 +104,11 @@ def acquire_global_lease(
         incident_id=incident_id,
         ttl_seconds=hardening.lease_ttl_seconds,
     )
+    if result.quarantined:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "sandbox_cleanup_failed", "state": "quarantined"},
+        )
     if not result.acquired:
         lease_failures.add(1)
         detail: dict[str, object] = {"error": "sandbox_busy", "busy": True}
@@ -98,6 +117,21 @@ def acquire_global_lease(
         raise HTTPException(status_code=409, detail=detail)
     live_incidents_started.add(1)
     hardening.session_store.increment_live_incident_count(session.session_id)
+
+
+def renew_global_lease(
+    *,
+    hardening: SandboxHardening,
+    session_id: str,
+    incident_id: str,
+) -> bool:
+    if not hardening.enforce_live_guards:
+        return True
+    return hardening.lease_store.renew(
+        session_id=session_id,
+        incident_id=incident_id,
+        ttl_seconds=hardening.lease_ttl_seconds,
+    )
 
 
 def release_global_lease(
@@ -137,10 +171,12 @@ def incident_expires_at(hardening: SandboxHardening) -> datetime | None:
 def sandbox_status(hardening: SandboxHardening) -> dict[str, object]:
     if not hardening.enforce_live_guards:
         return {"state": "live_sandbox_available"}
-    lease = hardening.lease_store.inspect()
+    if hardening.lease_store.is_quarantined():
+        return {"state": "sandbox_cleanup_failed"}
     if hardening.quota_guard.is_global_budget_exhausted():
         return {"state": "ai_provider_unavailable"}
-    if lease is not None:
+    lease = hardening.lease_store.inspect()
+    if lease is not None and lease.state.value == "active":
         retry = max((lease.expires_at - datetime.now(UTC)).total_seconds(), 1.0)
         return {
             "state": "sandbox_busy",

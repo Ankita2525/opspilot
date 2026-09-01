@@ -36,6 +36,7 @@ from backend.app.api.public_guard import (
     check_rate_limit,
     incident_expires_at,
     release_global_lease,
+    renew_global_lease,
     require_incident_owner,
     resolve_demo_session,
     sandbox_status,
@@ -131,6 +132,7 @@ def create_app(
                     resolved_repository,
                     as_of,
                 ),
+                lease_ttl_seconds=resolved_hardening.lease_ttl_seconds,
                 interval_seconds=resolved_hardening.cleanup_interval_seconds,
             )
             cleanup_worker.start()
@@ -145,6 +147,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -537,6 +540,11 @@ def create_app(
             owner_session_id=owner_id,
             requester_session_id=demo_session.session_id,
             enforce=resolved_hardening.enforce_live_guards,
+        )
+        renew_global_lease(
+            hardening=resolved_hardening,
+            session_id=demo_session.session_id,
+            incident_id=incident_id,
         )
         try:
             resumed = session.coordinator.resume(

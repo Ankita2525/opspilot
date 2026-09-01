@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from enum import Enum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -63,6 +63,9 @@ class OpsPilotSettings(BaseModel):
     quota_global_daily_model_call_cap: int = 500
     cleanup_interval_seconds: float = 30.0
     public_domain: str | None = None
+    session_cookie_samesite: Literal["lax", "none", "strict"] = "lax"
+    session_cookie_domain: str | None = None
+    trust_proxy_headers: bool = False
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -151,6 +154,13 @@ class OpsPilotSettings(BaseModel):
                 env.get("OPSPILOT_CLEANUP_INTERVAL_SECONDS", "30")
             ),
             public_domain=_optional(env.get("OPSPILOT_PUBLIC_DOMAIN")),
+            session_cookie_samesite=_parse_samesite(
+                env.get("OPSPILOT_SESSION_COOKIE_SAMESITE", "lax")
+            ),
+            session_cookie_domain=_optional(env.get("OPSPILOT_SESSION_COOKIE_DOMAIN")),
+            trust_proxy_headers=_parse_bool(
+                env.get("OPSPILOT_TRUST_PROXY_HEADERS", "false")
+            ),
         )
         settings.validate_runtime()
         return settings
@@ -244,3 +254,12 @@ def _parse_int(value: str) -> int:
 
 def _parse_float(value: str) -> float:
     return float(value.strip())
+
+
+def _parse_samesite(value: str) -> Literal["lax", "none", "strict"]:
+    normalized = value.strip().lower()
+    if normalized not in {"lax", "none", "strict"}:
+        raise ConfigurationError(
+            "OPSPILOT_SESSION_COOKIE_SAMESITE must be 'lax', 'none', or 'strict'."
+        )
+    return normalized  # type: ignore[return-value]
