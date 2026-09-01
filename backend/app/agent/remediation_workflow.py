@@ -1,4 +1,4 @@
-from typing import TypedDict, cast
+from typing import Callable, TypedDict, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
@@ -34,10 +34,12 @@ class RemediationApprovalWorkflow:
         diagnostic_tools: DiagnosticTools,
         checkpointer: BaseCheckpointSaver | None = None,
         allow_in_memory_checkpointer: bool = True,
+        verify_recovery_fn: Callable[[RemediationState], dict] | None = None,
     ) -> None:
         self._remediation_tools = remediation_tools
         self._approvals = approvals
         self._diagnostic_tools = diagnostic_tools
+        self._verify_recovery_fn = verify_recovery_fn
         self._checkpointer = _configure_checkpointer(
             checkpointer,
             allow_in_memory_fallback=allow_in_memory_checkpointer,
@@ -148,6 +150,8 @@ class RemediationApprovalWorkflow:
         }
 
     def _verify_recovery(self, state: RemediationState) -> dict:
+        if self._verify_recovery_fn is not None:
+            return self._verify_recovery_fn(state)
         health = self._diagnostic_tools.get_service_health(state["service"])
         return {
             "recovered_p95_latency_ms": health.p95_latency_ms,
