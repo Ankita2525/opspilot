@@ -10,7 +10,7 @@ import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
 import { ScenarioCard } from "@/components/ScenarioCard";
-import { getScenarios, submitApproval } from "@/lib/api";
+import { getRuntimeSummary, getScenarios, submitApproval } from "@/lib/api";
 import { streamIncident } from "@/lib/incident-stream";
 import {
   formatErrorRate,
@@ -48,6 +48,7 @@ export default function Home() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [telemetryMode, setTelemetryMode] = useState<string>("reference");
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
   >("load");
@@ -96,7 +97,10 @@ export default function Home() {
 
     async function loadOnMount() {
       try {
-        const loaded = await getScenarios();
+        const [loaded, runtime] = await Promise.all([
+          getScenarios(),
+          getRuntimeSummary().catch(() => null),
+        ]);
         if (cancelled) {
           return;
         }
@@ -105,6 +109,9 @@ export default function Home() {
         }
         setScenarios(loaded);
         setSelectedScenarioId(loaded[0].id);
+        if (runtime?.telemetry_mode) {
+          setTelemetryMode(runtime.telemetry_mode);
+        }
         setPhase("ready");
       } catch (cause) {
         if (cancelled) {
@@ -284,6 +291,7 @@ export default function Home() {
             service={service}
             title={title}
             live={live?.streaming === true}
+            telemetryMode={telemetryMode}
             eventCount={live?.eventCount}
           />
         ) : null}
@@ -331,7 +339,9 @@ export default function Home() {
         {phase === "ready" && scenarios.length > 0 ? (
           <section aria-labelledby="scenario-heading">
             <h2 id="scenario-heading" className="section-heading">
-              Production incidents
+              {telemetryMode === "live"
+                ? "Live incident sandbox"
+                : "Deterministic reference evaluation"}
             </h2>
             <div
               className="scenario-grid"
@@ -367,6 +377,22 @@ export default function Home() {
 
         {live && inWorkspace ? (
           <>
+            {live.baseline && telemetryMode === "live" ? (
+              <div className="metric-grid">
+                <MetricCard
+                  label="Baseline p95"
+                  value={formatLatency(live.baseline.p95_latency_ms)}
+                  hint="Measured before fault"
+                  tone="neutral"
+                />
+                <MetricCard
+                  label="Baseline error rate"
+                  value={formatErrorRate(live.baseline.error_rate_percent)}
+                  hint="Measured before fault"
+                  tone="neutral"
+                />
+              </div>
+            ) : null}
             {originalMetrics ? (
               <div className="metric-grid">
                 <MetricCard

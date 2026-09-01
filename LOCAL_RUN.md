@@ -37,6 +37,28 @@ OPSPILOT_MODEL_PROVIDER=deterministic docker compose up --build
 
 Open http://localhost:3000. The API is at http://localhost:8000.
 
+## Live incident sandbox
+
+The live sandbox runs real FastAPI microservices, generates on-demand HTTP
+workload, scrapes Prometheus metrics, and queries Loki logs. Reference mode
+continues to use deterministic simulator fixtures for CI and evaluation.
+
+```bash
+export OPSPILOT_MODEL_PROVIDER=deterministic
+export OPSPILOT_TELEMETRY_MODE=live
+export OPSPILOT_PROMETHEUS_URL=http://localhost:9090
+export OPSPILOT_LOKI_URL=http://localhost:3100
+export SANDBOX_CONTROL_TOKEN=sandbox-control-test-token
+
+docker compose --profile live up --build
+```
+
+Validate measured before/after behavior locally:
+
+```bash
+uv run python scripts/validate_live_sandbox.py
+```
+
 ### Groq
 
 ```bash

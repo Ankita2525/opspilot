@@ -19,7 +19,7 @@ def _loaded() -> tuple[SimulatedEnvironment, ApprovalService, RemediationTools]:
     environment = SimulatedEnvironment()
     environment.load_scenario(SCENARIO_ID)
     approvals = ApprovalService()
-    tools = RemediationTools(environment=environment, approvals=approvals)
+    tools = RemediationTools(environment, approvals)
     return environment, approvals, tools
 
 

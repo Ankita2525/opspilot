@@ -8,6 +8,20 @@ export const INVESTIGATION_EVENT_TYPES = [
   "approval_required",
   "incident_completed",
   "incident_failed",
+  "sandbox_warming",
+  "baseline_collection_started",
+  "baseline_collected",
+  "fault_activated",
+  "workload_started",
+  "telemetry_source_degraded",
+  "telemetry_source_recovered",
+  "live_evidence_collected",
+  "investigation_blocked",
+  "verification_started",
+  "verification_sample",
+  "verification_pending",
+  "verification_completed",
+  "workload_stopped",
 ] as const;
 
 export type InvestigationEventType = (typeof INVESTIGATION_EVENT_TYPES)[number];
