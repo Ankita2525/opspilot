@@ -38,6 +38,12 @@ class GlobalSandboxLeaseStore(Protocol):
 
     def expire_stale(self) -> int: ...
 
+    def quarantine(self, *, incident_id: str, reason: str) -> None: ...
+
+    def is_quarantined(self) -> bool: ...
+
+    def clear_quarantine(self) -> bool: ...
+
 
 def _lease_from_row(row: dict[str, object]) -> GlobalSandboxLease | None:
     state_raw = str(row.get("state", "idle"))
@@ -45,7 +51,10 @@ def _lease_from_row(row: dict[str, object]) -> GlobalSandboxLease | None:
         return None
     lease_id = row.get("lease_id")
     session_id = row.get("session_id")
-    if lease_id is None or session_id is None:
+    if state_raw == LeaseState.QUARANTINED.value:
+        lease_id = lease_id or "quarantined"
+        session_id = session_id or "quarantined"
+    elif lease_id is None or session_id is None:
         return None
     acquired_at = row.get("acquired_at")
     expires_at = row.get("expires_at")
@@ -96,6 +105,14 @@ class PostgresGlobalSandboxLeaseStore:
                 ).fetchone()
                 if row is None:
                     return LeaseAcquireResult(acquired=False, lease=None)
+                state_raw = str(row.get("state", "idle"))
+                if state_raw == LeaseState.QUARANTINED.value:
+                    lease = _lease_from_row(row)
+                    return LeaseAcquireResult(
+                        acquired=False,
+                        lease=lease,
+                        quarantined=True,
+                    )
                 current = _lease_from_row(row)
                 if current is not None and current.state is LeaseState.ACTIVE:
                     if current.expires_at > now:
@@ -257,6 +274,55 @@ class PostgresGlobalSandboxLeaseStore:
                     )
                 return expired
 
+    def quarantine(self, *, incident_id: str, reason: str) -> None:
+        now = datetime.now(UTC)
+        with psycopg.connect(self._database_url) as conn:
+            conn.execute(
+                """
+                UPDATE sandbox_lease_holder
+                SET state = %s,
+                    incident_id = %s,
+                    renewed_at = %s
+                WHERE id = %s
+                """,
+                (
+                    LeaseState.QUARANTINED.value,
+                    incident_id,
+                    now,
+                    SINGLETON_LEASE_ID,
+                ),
+            )
+
+    def is_quarantined(self) -> bool:
+        with psycopg.connect(self._database_url, row_factory=dict_row) as conn:
+            row = conn.execute(
+                "SELECT state FROM sandbox_lease_holder WHERE id = %s",
+                (SINGLETON_LEASE_ID,),
+            ).fetchone()
+            if row is None:
+                return False
+            return str(row["state"]) == LeaseState.QUARANTINED.value
+
+    def clear_quarantine(self) -> bool:
+        with psycopg.connect(self._database_url) as conn:
+            with conn.transaction():
+                result = conn.execute(
+                    """
+                    UPDATE sandbox_lease_holder
+                    SET state = %s,
+                        lease_id = NULL,
+                        session_id = NULL,
+                        incident_id = NULL
+                    WHERE id = %s AND state = %s
+                    """,
+                    (
+                        LeaseState.IDLE.value,
+                        SINGLETON_LEASE_ID,
+                        LeaseState.QUARANTINED.value,
+                    ),
+                )
+                return result.rowcount == 1
+
 
 class InMemoryGlobalSandboxLeaseStore:
     """Process-local lease store for tests and in-memory runtimes."""
@@ -274,6 +340,12 @@ class InMemoryGlobalSandboxLeaseStore:
     ) -> LeaseAcquireResult:
         with self._lock:
             now = datetime.now(UTC)
+            if self._lease is not None and self._lease.state is LeaseState.QUARANTINED:
+                return LeaseAcquireResult(
+                    acquired=False,
+                    lease=self._lease,
+                    quarantined=True,
+                )
             self._expire_stale_locked(now)
             if self._lease is not None and self._lease.state is LeaseState.ACTIVE:
                 if self._lease.session_id == session_id and self._lease.incident_id == incident_id:
@@ -353,5 +425,35 @@ class InMemoryGlobalSandboxLeaseStore:
     def _expire_stale_locked(self, now: datetime) -> None:
         if self._lease is None:
             return
+        if self._lease.state is LeaseState.QUARANTINED:
+            return
         if self._lease.expires_at <= now:
             self._lease = None
+
+    def quarantine(self, *, incident_id: str, reason: str) -> None:
+        del reason
+        now = datetime.now(UTC)
+        with self._lock:
+            self._lease = GlobalSandboxLease(
+                lease_id="quarantined",
+                session_id="quarantined",
+                incident_id=incident_id,
+                acquired_at=now,
+                expires_at=now + timedelta(days=365),
+                renewed_at=now,
+                state=LeaseState.QUARANTINED,
+            )
+
+    def is_quarantined(self) -> bool:
+        with self._lock:
+            return (
+                self._lease is not None
+                and self._lease.state is LeaseState.QUARANTINED
+            )
+
+    def clear_quarantine(self) -> bool:
+        with self._lock:
+            if self._lease is None or self._lease.state is not LeaseState.QUARANTINED:
+                return False
+            self._lease = None
+            return True

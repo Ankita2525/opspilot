@@ -10,6 +10,7 @@ class LeaseState(str, Enum):
     ACTIVE = "active"
     RELEASED = "released"
     EXPIRED = "expired"
+    QUARANTINED = "quarantined"
 
 
 @dataclass(frozen=True)
@@ -29,3 +30,4 @@ class LeaseAcquireResult:
     lease: GlobalSandboxLease | None
     retry_after_seconds: float | None = None
     busy: bool = False
+    quarantined: bool = False

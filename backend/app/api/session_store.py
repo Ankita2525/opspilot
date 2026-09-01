@@ -48,6 +48,13 @@ class IncidentSessionStore:
     def has(self, incident_id: str) -> bool:
         return incident_id in self._sessions
 
+    def list_live_sessions(self) -> list[tuple[str, IncidentSession]]:
+        return [
+            (incident_id, session)
+            for incident_id, session in self._sessions.items()
+            if session.live_session is not None
+        ]
+
     def remove(self, incident_id: str) -> None:
         try:
             session = self._sessions.pop(incident_id)

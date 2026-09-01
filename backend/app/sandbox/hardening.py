@@ -46,6 +46,8 @@ class SandboxHardening:
     lease_ttl_seconds: int
     incident_ttl_seconds: int
     session_cookie_secure: bool
+    session_cookie_samesite: str
+    session_cookie_domain: str | None
     cleanup_interval_seconds: float
 
     def wrap_provider(
@@ -115,6 +117,8 @@ def build_sandbox_hardening(
         lease_ttl_seconds=settings.lease_ttl_seconds,
         incident_ttl_seconds=settings.incident_ttl_seconds,
         session_cookie_secure=settings.session_cookie_secure,
+        session_cookie_samesite=settings.session_cookie_samesite,
+        session_cookie_domain=settings.session_cookie_domain,
         cleanup_interval_seconds=settings.cleanup_interval_seconds,
     )
 
@@ -138,6 +142,8 @@ def _in_memory_hardening(*, enforce_live_guards: bool) -> SandboxHardening:
         lease_ttl_seconds=600,
         incident_ttl_seconds=1800,
         session_cookie_secure=False,
+        session_cookie_samesite="lax",
+        session_cookie_domain=None,
         cleanup_interval_seconds=30.0,
     )
 
