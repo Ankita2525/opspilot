@@ -13,6 +13,7 @@ type IncidentHeaderProps = {
   service: string;
   title: string;
   live?: boolean;
+  telemetryMode?: string | null;
   eventCount?: number;
 };
 
@@ -52,17 +53,24 @@ export function IncidentHeader({
   service,
   title,
   live = false,
+  telemetryMode = null,
   eventCount,
 }: IncidentHeaderProps) {
   const copy = PHASE_COPY[phase];
+  const modeLabel =
+    telemetryMode === "live"
+      ? "LIVE SANDBOX"
+      : live
+        ? "LIVE"
+        : null;
 
   return (
     <header className={`incident-header incident-header-${phase}`}>
       <p className="incident-kicker">
         {copy.eyebrow}
-        {live ? (
-          <span className="live-badge" aria-label="Live investigation">
-            LIVE
+        {modeLabel ? (
+          <span className="live-badge" aria-label="Live incident sandbox">
+            {modeLabel}
           </span>
         ) : null}
       </p>

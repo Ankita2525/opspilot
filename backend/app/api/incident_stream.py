@@ -17,6 +17,7 @@ TERMINAL_EVENT_TYPES = {
     InvestigationEventType.APPROVAL_REQUIRED,
     InvestigationEventType.INCIDENT_COMPLETED,
     InvestigationEventType.INCIDENT_FAILED,
+    InvestigationEventType.INVESTIGATION_BLOCKED,
 }
 
 BeginIncident = Callable[

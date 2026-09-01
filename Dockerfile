@@ -20,6 +20,7 @@ RUN uv sync --frozen --no-dev
 COPY backend ./backend
 COPY simulator ./simulator
 COPY skills ./skills
+COPY sandbox ./sandbox
 
 USER opspilot
 

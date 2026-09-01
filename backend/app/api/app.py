@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -9,7 +11,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from backend.app.agent.hypotheses import HypothesisEngine
 from backend.app.agent.incident_response import IncidentResponseCoordinator
-from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow
+from backend.app.agent.remediation_workflow import RemediationApprovalWorkflow, RemediationState
 from backend.app.agent.workflow import InvestigationWorkflow
 from backend.app.api.incident_stream import streamed_incident_response
 from backend.app.api.public_records import (
@@ -20,31 +22,33 @@ from backend.app.api.public_records import (
 from backend.app.api.schemas import (
     BaselineEvaluationResponse,
     HealthResponse,
-    ReadyResponse,
     IncidentApprovalResponse,
     IncidentAuditResponse,
     IncidentStartResponse,
     IncidentSummaryResponse,
+    ReadyResponse,
     ScenarioSummary,
     StartIncidentRequest,
     SubmitApprovalRequest,
 )
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
+from backend.app.config import DEFAULT_CORS_ORIGINS, OpsPilotSettings
+from backend.app.telemetry.factory import build_live_runtime, build_reference_runtime
+from backend.app.telemetry.models import TelemetryMode
 from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.ids import new_incident_id
-from backend.app.config import DEFAULT_CORS_ORIGINS, OpsPilotSettings
+from backend.app.live.orchestrator import LiveIncidentOrchestrator
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
-from backend.app.runtime import RuntimeResources, build_runtime_from_settings
 from backend.app.observability.tracing import get_tracer
 from backend.app.persistence.lifecycle import IncidentLifecyclePersistence
 from backend.app.persistence.memory import InMemoryOpsPilotRepository
 from backend.app.persistence.models import ApprovalRecord, IncidentRecord
 from backend.app.persistence.repository import OpsPilotRepository
+from backend.app.runtime import RuntimeResources, build_runtime_from_settings
 from backend.app.safety.approvals import ApprovalService
 from backend.app.security.untrusted_text import sanitize_public_instance
 from backend.app.tools.diagnostics import DiagnosticTools
-from backend.app.tools.remediation import RemediationTools
 from backend.app.tools.schemas import MetricResponse
 from simulator.environment import SimulatedEnvironment
 from simulator.scenarios import get_scenario, list_scenarios
@@ -77,6 +81,7 @@ def create_app(
     )
     persistence = IncidentLifecyclePersistence(resolved_repository, now=now)
     store = IncidentSessionStore()
+    live_orchestrator = LiveIncidentOrchestrator()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -102,37 +107,119 @@ def create_app(
     app.state.runtime = runtime
     app.state.settings = resolved_settings
 
-    def _runtime_for_scenario(
-        scenario_id: str,
+    def _telemetry_mode() -> TelemetryMode:
+        if resolved_settings is None:
+            return TelemetryMode.REFERENCE
+        return resolved_settings.telemetry_mode
+
+    def _build_coordinator(
+        *,
+        diagnostics: DiagnosticTools,
+        remediation_tools,
+        approvals: ApprovalService,
         events: InvestigationEventEmitter | None = None,
-    ) -> tuple[SimulatedEnvironment, IncidentResponseCoordinator]:
-        environment = SimulatedEnvironment()
-        environment.load_scenario(scenario_id)
-        diagnostics = DiagnosticTools(environment)
-        approvals = ApprovalService(repository=resolved_repository, now=now)
-        coordinator = IncidentResponseCoordinator(
+        verify_recovery_fn=None,
+    ) -> IncidentResponseCoordinator:
+        return IncidentResponseCoordinator(
             investigation_workflow=InvestigationWorkflow(
                 tools=diagnostics,
                 hypothesis_engine=HypothesisEngine(resolved_provider),
                 events=events,
             ),
             remediation_workflow=RemediationApprovalWorkflow(
-                remediation_tools=RemediationTools(environment, approvals),
+                remediation_tools=remediation_tools,
                 approvals=approvals,
                 diagnostic_tools=diagnostics,
                 checkpointer=app.state.checkpointer,
                 allow_in_memory_checkpointer=runtime.allow_in_memory_checkpointer,
+                verify_recovery_fn=verify_recovery_fn,
             ),
         )
-        return environment, coordinator
+
+    def _runtime_for_scenario(
+        scenario_id: str,
+        events: InvestigationEventEmitter | None = None,
+        *,
+        live_session=None,
+        verify_recovery_fn=None,
+    ):
+        approvals = ApprovalService(repository=resolved_repository, now=now)
+        if _telemetry_mode() is TelemetryMode.LIVE:
+            if live_session is None:
+                raise ValueError("Live telemetry mode requires a prepared live session.")
+            incident_runtime = build_live_runtime(
+                service=live_session.mapping.affected_service,
+                telemetry=live_session.telemetry,
+                remediation_backend=live_session.remediation,
+                approvals=approvals,
+            )
+            return (
+                None,
+                _build_coordinator(
+                    diagnostics=incident_runtime.diagnostics,
+                    remediation_tools=incident_runtime.remediation,
+                    approvals=approvals,
+                    events=events,
+                    verify_recovery_fn=verify_recovery_fn,
+                ),
+            )
+        incident_runtime = build_reference_runtime(scenario_id, approvals)
+        return (
+            incident_runtime.simulator_environment,
+            _build_coordinator(
+                diagnostics=incident_runtime.diagnostics,
+                remediation_tools=incident_runtime.remediation,
+                approvals=approvals,
+                events=events,
+                verify_recovery_fn=verify_recovery_fn,
+            ),
+        )
 
     def _begin_incident(
         scenario,
         events: InvestigationEventEmitter | None = None,
         *,
         incident_id: str,
+        live_session=None,
     ):
-        environment, coordinator = _runtime_for_scenario(scenario.id, events=events)
+        verify_fn = None
+        if live_session is not None:
+
+            def verify_fn(state: RemediationState) -> dict:
+                return live_orchestrator.verify_recovery(live_session, events=events)
+
+        environment, coordinator = _runtime_for_scenario(
+            scenario.id,
+            events=events,
+            live_session=live_session,
+            verify_recovery_fn=verify_fn,
+        )
+        if live_session is not None and live_session.blocked:
+            created_at = persistence.record_incident_created(
+                incident_id=incident_id,
+                scenario_id=scenario.id,
+                affected_service=scenario.affected_service,
+            )
+            started = _blocked_live_start(
+                incident_id=incident_id,
+                scenario=scenario,
+                live_session=live_session,
+            )
+            store.put(
+                incident_id,
+                IncidentSession(
+                    coordinator=coordinator,
+                    remediation_thread_id=incident_id,
+                    proposal_id=f"{incident_id}-proposal",
+                    affected_service=scenario.affected_service,
+                    scenario_id=scenario.id,
+                    created_at=created_at,
+                    telemetry_mode="live",
+                    live_session=live_session,
+                ),
+            )
+            return started
+
         remediation_thread_id = incident_id
         proposal_id = f"{incident_id}-proposal"
         created_at = persistence.record_incident_created(
@@ -157,6 +244,8 @@ def create_app(
                 affected_service=scenario.affected_service,
                 scenario_id=scenario.id,
                 created_at=created_at,
+                telemetry_mode="live" if live_session is not None else "reference",
+                live_session=live_session,
             ),
         )
         return started
@@ -187,6 +276,12 @@ def create_app(
             for scenario in list_scenarios()
         ]
 
+    @app.get("/api/runtime")
+    def runtime_summary() -> dict:
+        if resolved_settings is None:
+            return {"telemetry_mode": "reference"}
+        return sanitize_public_instance(resolved_settings.safe_summary())
+
     @app.post("/api/incidents/start", response_model=IncidentStartResponse)
     def start_incident(body: StartIncidentRequest) -> IncidentStartResponse:
         try:
@@ -194,11 +289,28 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        started = _begin_incident(scenario, incident_id=new_incident_id())
+        incident_id = new_incident_id()
+        live_session = None
+        if _telemetry_mode() is TelemetryMode.LIVE:
+            try:
+                live_session = live_orchestrator.prepare(
+                    incident_id=incident_id,
+                    scenario_id=scenario.id,
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        started = _begin_incident(
+            scenario,
+            incident_id=incident_id,
+            live_session=live_session,
+        )
         investigation = started.investigation
         metrics = investigation["metrics"]
         hypothesis_result = investigation["hypothesis_result"]
         if metrics is None or hypothesis_result is None:
+            if live_session is not None:
+                live_orchestrator.cleanup(live_session)
             raise HTTPException(
                 status_code=500,
                 detail="Investigation completed without metrics or a hypothesis.",
@@ -228,12 +340,26 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         incident_id = new_incident_id()
+
+        def begin(loaded, events, _incident_id=incident_id):
+            live_session = None
+            if _telemetry_mode() is TelemetryMode.LIVE:
+                live_session = live_orchestrator.prepare(
+                    incident_id=_incident_id,
+                    scenario_id=loaded.id,
+                    events=events,
+                )
+            return _begin_incident(
+                loaded,
+                events,
+                incident_id=_incident_id,
+                live_session=live_session,
+            )
+
         return streamed_incident_response(
             scenario=scenario,
             incident_id=incident_id,
-            begin_incident=lambda loaded, events, _incident_id=incident_id: (
-                _begin_incident(loaded, events, incident_id=_incident_id)
-            ),
+            begin_incident=begin,
             now=now,
         )
 
@@ -251,7 +377,7 @@ def create_app(
                 incident_id=incident_id,
                 store=store,
                 repository=resolved_repository,
-                runtime_factory=_runtime_for_scenario,
+                runtime_factory=lambda scenario_id: _runtime_for_scenario(scenario_id),
             )
         try:
             resumed = session.coordinator.resume(
@@ -265,6 +391,13 @@ def create_app(
             proposal_id=session.proposal_id,
             resumed=resumed,
         )
+        if session.live_session is not None and resumed.status in {
+            "resolved",
+            "remediation_failed",
+            "rejected",
+            "verification_pending",
+        }:
+            live_orchestrator.cleanup(session.live_session)
         return sanitize_public_instance(
             IncidentApprovalResponse(
                 incident_id=incident_id,
@@ -283,7 +416,13 @@ def create_app(
     )
     def get_incident_metrics(incident_id: str) -> MetricResponse:
         session = _require_session(store, incident_id)
-        return DiagnosticTools(session.environment).query_metrics(
+        if session.live_session is not None:
+            return session.live_session.telemetry.query_metrics(session.affected_service)
+        if session.environment is None:
+            raise HTTPException(status_code=404, detail="Incident telemetry unavailable.")
+        from backend.app.telemetry.simulator import SimulatorTelemetryBackend
+
+        return DiagnosticTools(SimulatorTelemetryBackend(session.environment)).query_metrics(
             session.affected_service
         )
 
@@ -320,6 +459,26 @@ def create_app(
         return public_baseline_evaluation(result)
 
     return app
+
+
+def _blocked_live_start(*, incident_id, scenario, live_session):
+    from backend.app.agent.incident_response import IncidentResponseStartResult
+
+    return IncidentResponseStartResult(
+        incident_id=incident_id,
+        affected_service=scenario.affected_service,
+        status="blocked_by_telemetry",
+        investigation={
+            "status": "blocked_by_telemetry",
+            "completed_steps": [],
+            "metrics": None,
+            "hypothesis_result": None,
+            "selected_skills": [],
+        },
+        recommended_action=None,
+        proposed_version=None,
+        approval_request=None,
+    )
 
 
 def _resolve_runtime(
@@ -368,9 +527,7 @@ def _reconstruct_approval_session(
     incident_id: str,
     store: IncidentSessionStore,
     repository: OpsPilotRepository,
-    runtime_factory: Callable[
-        [str], tuple[SimulatedEnvironment, IncidentResponseCoordinator]
-    ],
+    runtime_factory: Callable,
 ) -> IncidentSession:
     with get_tracer().start_as_current_span("opspilot.checkpoint.resume") as span:
         span.set_attribute("opspilot.incident_id", incident_id)

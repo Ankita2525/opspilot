@@ -15,6 +15,23 @@ class InvestigationEventType(str, Enum):
     APPROVAL_REQUIRED = "approval_required"
     INCIDENT_COMPLETED = "incident_completed"
     INCIDENT_FAILED = "incident_failed"
+    SANDBOX_WARMING = "sandbox_warming"
+    BASELINE_COLLECTION_STARTED = "baseline_collection_started"
+    BASELINE_COLLECTED = "baseline_collected"
+    FAULT_ACTIVATED = "fault_activated"
+    WORKLOAD_STARTED = "workload_started"
+    TELEMETRY_SOURCE_DEGRADED = "telemetry_source_degraded"
+    TELEMETRY_SOURCE_RECOVERED = "telemetry_source_recovered"
+    LIVE_EVIDENCE_COLLECTED = "live_evidence_collected"
+    INVESTIGATION_BLOCKED = "investigation_blocked"
+    VERIFICATION_STARTED = "verification_started"
+    VERIFICATION_SAMPLE = "verification_sample"
+    VERIFICATION_PENDING = "verification_pending"
+    VERIFICATION_COMPLETED = "verification_completed"
+    WORKLOAD_STOPPED = "workload_stopped"
+
+
+LiveIncidentEventType = InvestigationEventType
 
 
 class InvestigationEvent(BaseModel):

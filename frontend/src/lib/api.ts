@@ -83,3 +83,14 @@ export function getIncidentAudit(incidentId: string): Promise<IncidentAudit> {
 export function getBaselineEvaluation(): Promise<BaselineEvaluation> {
   return request<BaselineEvaluation>("/api/evaluations/baseline");
 }
+
+export type RuntimeSummary = {
+  environment: string;
+  model_provider: string;
+  database: string;
+  telemetry_mode: string;
+};
+
+export function getRuntimeSummary(): Promise<RuntimeSummary> {
+  return request<RuntimeSummary>("/api/runtime");
+}

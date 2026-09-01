@@ -72,6 +72,9 @@ export type LiveIncidentState = {
   affectedService: string | null;
   streaming: boolean;
   failed: boolean;
+  telemetryMode: string | null;
+  baseline: { p95_latency_ms: number; error_rate_percent: number } | null;
+  telemetryHealth: string | null;
   metrics: Metrics | null;
   selectedSkills: string[];
   symptomSummary: string | null;
@@ -91,6 +94,9 @@ export function createLiveIncidentState(): LiveIncidentState {
     affectedService: null,
     streaming: true,
     failed: false,
+    telemetryMode: null,
+    baseline: null,
+    telemetryHealth: null,
     metrics: null,
     selectedSkills: [],
     symptomSummary: null,
@@ -160,6 +166,20 @@ export function applyInvestigationEvent(
     case "hypothesis_generated":
       completeStep(next, "generate_hypothesis");
       next.hypothesis = readHypothesis(event.data) ?? next.hypothesis;
+      break;
+    case "baseline_collected":
+      next.baseline = readBaseline(event.data);
+      break;
+    case "telemetry_source_degraded":
+      next.telemetryHealth = "degraded";
+      break;
+    case "telemetry_source_recovered":
+      next.telemetryHealth = "healthy";
+      break;
+    case "investigation_blocked":
+      next.streaming = false;
+      next.failed = true;
+      next.telemetryHealth = "unavailable";
       break;
     case "approval_required":
       next.streaming = false;
@@ -242,6 +262,22 @@ function readHypothesis(data: Record<string, unknown>): LiveHypothesis | null {
     recommendedAction,
     recommendationSummary: readString(data, "recommendation_summary"),
   };
+}
+
+function readBaseline(
+  data: Record<string, unknown>,
+): LiveIncidentState["baseline"] {
+  const baseline = data.baseline;
+  if (typeof baseline !== "object" || baseline === null || Array.isArray(baseline)) {
+    return null;
+  }
+  const record = baseline as Record<string, unknown>;
+  const latency = readNumber(record, "p95_latency_ms");
+  const errorRate = readNumber(record, "error_rate_percent");
+  if (latency === null || errorRate === null) {
+    return null;
+  }
+  return { p95_latency_ms: latency, error_rate_percent: errorRate };
 }
 
 function readApproval(event: InvestigationEvent): LiveApproval | null {

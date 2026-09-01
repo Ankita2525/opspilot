@@ -1,7 +1,11 @@
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from backend.app.events.models import InvestigationEvent, InvestigationEventType
+from backend.app.events.models import (
+    InvestigationEvent,
+    InvestigationEventType,
+    LiveIncidentEventType,
+)
 
 EventPublish = Callable[[InvestigationEvent], None]
 Clock = Callable[[], datetime]
@@ -48,3 +52,18 @@ class InvestigationEventEmitter:
         )
         self._publish(event)
         return event
+
+    def emit_live(
+        self,
+        event_type: LiveIncidentEventType,
+        *,
+        message: str,
+        step: str | None = None,
+        data: dict | None = None,
+    ) -> InvestigationEvent | None:
+        return self.emit(
+            InvestigationEventType(event_type.value),
+            message=message,
+            step=step,
+            data=data,
+        )
