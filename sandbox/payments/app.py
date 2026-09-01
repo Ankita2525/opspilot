@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from prometheus_client import Counter, Histogram
 from pydantic import BaseModel
 
+from sandbox.common.otel_logging import setup_otel_logging
 from sandbox.common.telemetry import (
     RevisionState,
     StructuredLogger,
@@ -22,6 +23,8 @@ HEALTHY_REVISION = os.environ.get("PAYMENTS_HEALTHY_REVISION", "v3.4.1")
 FAULTY_REVISION = os.environ.get("PAYMENTS_FAULTY_REVISION", "v3.4.2")
 PROVIDER_URL = os.environ.get("PROVIDER_SERVICE_URL", "http://localhost:8084")
 CLIENT_TIMEOUT_SECONDS = float(os.environ.get("PAYMENTS_PROVIDER_TIMEOUT_SECONDS", "3.0"))
+HEALTHY_PROVIDER_PATH = "/authorize"
+FAULTY_PROVIDER_PATH = "/authorize-slow"
 
 revision_state = RevisionState(
     service=SERVICE_NAME,
@@ -54,8 +57,15 @@ class ChargeRequest(BaseModel):
     currency: str = "USD"
 
 
+def _provider_path() -> str:
+    if revision_state.is_faulty:
+        return FAULTY_PROVIDER_PATH
+    return HEALTHY_PROVIDER_PATH
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    setup_otel_logging(SERVICE_NAME)
     yield
 
 
@@ -83,6 +93,7 @@ def health() -> dict:
         "status": "ok",
         "service": SERVICE_NAME,
         "revision": revision_state.current_revision,
+        "provider_path": _provider_path(),
     }
 
 
@@ -94,11 +105,12 @@ async def metrics(request: Request):
 @app.post("/v1/charges")
 def create_charge(body: ChargeRequest, request: Request) -> dict:
     correlation_id = request.headers.get("X-Correlation-Id")
+    provider_path = _provider_path()
     start = time.perf_counter()
     try:
         with httpx.Client(timeout=CLIENT_TIMEOUT_SECONDS) as client:
             response = client.post(
-                f"{PROVIDER_URL}/authorize",
+                f"{PROVIDER_URL}{provider_path}",
                 json={"amount_cents": body.amount_cents, "currency": body.currency},
                 headers={"X-Correlation-Id": correlation_id or ""},
             )
@@ -122,6 +134,7 @@ def create_charge(body: ChargeRequest, request: Request) -> dict:
             "ERROR",
             f"UpstreamTimeout: payment provider did not respond within {int(CLIENT_TIMEOUT_SECONDS * 1000)}ms",
             correlation_id=correlation_id,
+            extra={"provider_path": provider_path},
         )
         raise HTTPException(status_code=504, detail="Provider timeout") from exc
     except Exception as exc:
@@ -129,7 +142,12 @@ def create_charge(body: ChargeRequest, request: Request) -> dict:
             service=SERVICE_NAME,
             revision=revision_state.current_revision,
         ).inc()
-        logger.log("ERROR", f"Payment capture failed: {exc}", correlation_id=correlation_id)
+        logger.log(
+            "ERROR",
+            f"Payment capture failed: {exc}",
+            correlation_id=correlation_id,
+            extra={"provider_path": provider_path},
+        )
         raise HTTPException(status_code=502, detail="Payment failed") from exc
     duration = time.perf_counter() - start
     PROVIDER_DURATION.labels(
@@ -141,7 +159,9 @@ def create_charge(body: ChargeRequest, request: Request) -> dict:
 
 @app.get("/internal/revision")
 def get_revision() -> dict:
-    return revision_state.status()
+    status = revision_state.status()
+    status["provider_path"] = _provider_path()
+    return status
 
 
 @app.post("/internal/control/activate-fault")
@@ -149,7 +169,11 @@ def activate_fault(request: Request) -> dict:
     verify_control_token(request)
     revision_state.activate_faulty()
     logger._revision = revision_state.current_revision
-    return revision_state.status()
+    logger.log(
+        "WARN",
+        f"Activated faulty payments revision with provider path {_provider_path()}",
+    )
+    return get_revision()
 
 
 @app.post("/internal/control/rollback")
@@ -163,7 +187,8 @@ def rollback(request: Request, body: dict) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger._revision = revision_state.current_revision
-    return revision_state.status()
+    logger.log("INFO", f"Rolled back payments revision; provider path {_provider_path()}")
+    return get_revision()
 
 
 @app.get("/internal/deployments")

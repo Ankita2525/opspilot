@@ -11,6 +11,7 @@ dependencies = [
     "langgraph-checkpoint-postgres==3.1.2",
     "mcp[cli]>=2,<3",
     "opentelemetry-api>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
     "prometheus-client>=0.21.1",
     "psycopg[binary,pool]>=3.2",
@@ -22,6 +23,9 @@ dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: tests that require the live docker observability stack",
+]
 
 [dependency-groups]
 dev = [

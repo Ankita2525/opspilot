@@ -58,6 +58,34 @@ services:
       backend:
         condition: service_healthy
 
+  loki:
+    profiles: ["live"]
+    image: grafana/loki:3.4.2
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - opspilot-loki-data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3100/loki/api/v1/status/buildinfo | grep -q version"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  otel-collector:
+    profiles: ["live"]
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4318:4318"
+    depends_on:
+      loki:
+        condition: service_healthy
+
   checkout-api:
     profiles: ["live"]
     build:
@@ -68,11 +96,14 @@ services:
       SANDBOX_SERVICE_NAME: checkout-api
       CHECKOUT_DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
       interval: 10s
@@ -88,8 +119,12 @@ services:
     environment:
       SANDBOX_SERVICE_NAME: auth-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8082:8082"
+    depends_on:
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/health"]
       interval: 10s
@@ -105,8 +140,12 @@ services:
     environment:
       SANDBOX_SERVICE_NAME: provider-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8084:8084"
+    depends_on:
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8084/health"]
       interval: 10s
@@ -123,11 +162,14 @@ services:
       SANDBOX_SERVICE_NAME: payments-service
       PROVIDER_SERVICE_URL: http://provider-service:8084
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8083:8083"
     depends_on:
       provider-service:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8083/health"]
       interval: 10s
@@ -148,16 +190,11 @@ services:
         condition: service_healthy
       payments-service:
         condition: service_healthy
-
-  loki:
-    profiles: ["live"]
-    image: grafana/loki:3.4.2
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
-      - opspilot-loki-data:/loki
-    ports:
-      - "3100:3100"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   opspilot-postgres-data:

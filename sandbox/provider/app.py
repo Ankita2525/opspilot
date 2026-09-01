@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
+from sandbox.common.otel_logging import setup_otel_logging
 from sandbox.common.telemetry import (
     RevisionState,
     StructuredLogger,
@@ -19,7 +20,7 @@ SERVICE_NAME = "provider-service"
 HEALTHY_REVISION = os.environ.get("PROVIDER_HEALTHY_REVISION", "v0.9.0")
 FAULTY_REVISION = os.environ.get("PROVIDER_FAULTY_REVISION", "v0.9.1")
 HEALTHY_LATENCY_SECONDS = float(os.environ.get("PROVIDER_HEALTHY_LATENCY_SECONDS", "0.15"))
-FAULTY_LATENCY_SECONDS = float(os.environ.get("PROVIDER_FAULTY_LATENCY_SECONDS", "8.0"))
+SLOW_LATENCY_SECONDS = float(os.environ.get("PROVIDER_SLOW_LATENCY_SECONDS", "8.0"))
 
 revision_state = RevisionState(
     service=SERVICE_NAME,
@@ -37,6 +38,7 @@ class AuthorizeRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    setup_otel_logging(SERVICE_NAME)
     yield
 
 
@@ -72,23 +74,32 @@ async def metrics(request: Request):
     return await metrics_endpoint(request)
 
 
-@app.post("/authorize")
-def authorize(body: AuthorizeRequest, request: Request) -> dict:
+def _authorize(body: AuthorizeRequest, request: Request, delay_seconds: float) -> dict:
     correlation_id = request.headers.get("X-Correlation-Id")
-    delay = FAULTY_LATENCY_SECONDS if revision_state.is_faulty else HEALTHY_LATENCY_SECONDS
-    time.sleep(delay)
-    if revision_state.is_faulty:
-        logger.log(
-            "WARN",
-            f"Provider authorization delayed {delay:.1f}s for amount={body.amount_cents}",
-            correlation_id=correlation_id,
-        )
+    time.sleep(delay_seconds)
     return {
         "status": "authorized",
         "amount_cents": body.amount_cents,
         "currency": body.currency,
         "provider_revision": revision_state.current_revision,
+        "correlation_id": correlation_id,
     }
+
+
+@app.post("/authorize")
+def authorize(body: AuthorizeRequest, request: Request) -> dict:
+    return _authorize(body, request, HEALTHY_LATENCY_SECONDS)
+
+
+@app.post("/authorize-slow")
+def authorize_slow(body: AuthorizeRequest, request: Request) -> dict:
+    correlation_id = request.headers.get("X-Correlation-Id")
+    logger.log(
+        "INFO",
+        f"Slow authorization path invoked for amount={body.amount_cents}",
+        correlation_id=correlation_id,
+    )
+    return _authorize(body, request, SLOW_LATENCY_SECONDS)
 
 
 @app.get("/internal/revision")

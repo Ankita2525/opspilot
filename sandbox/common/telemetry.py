@@ -70,6 +70,16 @@ class StructuredLogger:
             self._logger.warning(line)
         else:
             self._logger.info(line)
+        from sandbox.common.otel_logging import emit_otel_log
+
+        emit_otel_log(
+            service=self._service,
+            revision=self._revision,
+            level=level,
+            message=message,
+            correlation_id=correlation_id,
+            extra=extra,
+        )
 
 
 class RevisionState:

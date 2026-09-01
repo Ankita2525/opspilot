@@ -75,11 +75,13 @@ class WorkloadDriver:
         incident_id: str,
         *,
         duration_seconds: float = 3.0,
+        concurrency: int | None = None,
     ) -> list[WorkloadSample]:
         return self._run_traffic(
             mapping=mapping,
             incident_id=incident_id,
             duration_seconds=duration_seconds,
+            concurrency=concurrency,
         )
 
     def start_continuous(
@@ -136,6 +138,13 @@ class WorkloadDriver:
     def _headers(self, incident_id: str) -> dict[str, str]:
         return {"X-Correlation-Id": incident_id}
 
+    def _concurrency_for(self, mapping: LiveScenarioMapping, override: int | None) -> int:
+        if override is not None:
+            return override
+        if mapping.affected_service == "checkout-api":
+            return max(self._concurrency, 8)
+        return self._concurrency
+
     def _run_traffic(
         self,
         *,
@@ -143,10 +152,12 @@ class WorkloadDriver:
         incident_id: str,
         duration_seconds: float,
         base_url: str | None = None,
+        concurrency: int | None = None,
     ) -> list[WorkloadSample]:
         resolved_base = (base_url or self.service_base_url(mapping)).rstrip("/")
         deadline = time.monotonic() + duration_seconds
         samples: list[WorkloadSample] = []
+        workers = self._concurrency_for(mapping, concurrency)
 
         def _one_request() -> WorkloadSample:
             start = time.perf_counter()
@@ -191,7 +202,7 @@ class WorkloadDriver:
                 status_code=status_code,
             )
 
-        with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = []
             while time.monotonic() < deadline:
                 futures.append(executor.submit(_one_request))
@@ -200,18 +211,28 @@ class WorkloadDriver:
                 samples.append(future.result())
         return samples
 
-    def summarize_samples(self, samples: list[WorkloadSample]) -> dict[str, Any]:
-        if not samples:
+    def summarize_samples(
+        self,
+        samples: list[WorkloadSample],
+        *,
+        after: datetime | None = None,
+    ) -> dict[str, Any]:
+        filtered = samples
+        if after is not None:
+            filtered = [sample for sample in samples if sample.timestamp > after]
+        if not filtered:
             return {
                 "request_count": 0,
                 "p95_latency_ms": 0,
                 "error_rate_percent": 0.0,
             }
-        latencies = sorted(sample.latency_ms for sample in samples)
+        latencies = sorted(sample.latency_ms for sample in filtered)
         p95_index = max(0, int(len(latencies) * 0.95) - 1)
-        failures = sum(1 for sample in samples if not sample.success)
+        failures = sum(1 for sample in filtered if not sample.success)
+        newest = max(sample.timestamp for sample in filtered)
         return {
-            "request_count": len(samples),
+            "request_count": len(filtered),
             "p95_latency_ms": int(latencies[p95_index]),
-            "error_rate_percent": round((failures / len(samples)) * 100, 2),
+            "error_rate_percent": round((failures / len(filtered)) * 100, 2),
+            "newest_sample_at": newest.isoformat(),
         }

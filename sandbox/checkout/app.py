@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from prometheus_client import Counter, Gauge
 from psycopg.rows import dict_row
 
+from sandbox.common.otel_logging import setup_otel_logging
 from sandbox.common.telemetry import (
     RevisionState,
     StructuredLogger,
@@ -133,6 +134,7 @@ def _update_pool_gauges() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    setup_otel_logging(SERVICE_NAME)
     _ensure_schema()
     _rebuild_pool()
     yield
@@ -183,7 +185,7 @@ def checkout(request: Request) -> dict:
     try:
         with _pool.connection() as conn:
             if revision_state.is_faulty:
-                conn.execute("SELECT pg_sleep(0.15)")
+                conn.execute("SELECT pg_sleep(0.2)")
             conn.execute(
                 "INSERT INTO checkout_orders (order_ref) VALUES (%s) RETURNING id",
                 (f"ord_{int(time.time() * 1000)}",),
@@ -204,6 +206,15 @@ def checkout(request: Request) -> dict:
         logger.log("ERROR", f"Checkout failed: {exc}", correlation_id=correlation_id)
         raise HTTPException(status_code=500, detail="Checkout failed") from exc
     _update_pool_gauges()
+    stats = _pool.get_stats() if _pool is not None else {}
+    pool_size = _pool_max_size()
+    available = stats.get("pool_available", 0)
+    if revision_state.is_faulty and available == 0:
+        logger.log(
+            "WARN",
+            f"Connection pool exhausted (active={pool_size}, idle=0, max={pool_size})",
+            correlation_id=correlation_id,
+        )
     return {"status": "ok", "orders": row["count"] if row else 0}
 
 

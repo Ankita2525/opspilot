@@ -16,6 +16,10 @@ from backend.app.telemetry.models import (
     TelemetrySourceKind,
     TelemetrySourceStatus,
 )
+from backend.app.telemetry.pipeline_health import (
+    check_metrics_pipeline,
+    wait_for_loki_ready,
+)
 from backend.app.telemetry.simulator import evaluate_health
 from backend.app.tools.schemas import (
     DeploymentResponse,
@@ -48,11 +52,50 @@ class LiveTelemetryBackend:
         self._health_cache: list = []
 
     @property
+    def prometheus_client(self) -> PrometheusClient:
+        return self._prometheus
+
+    @property
+    def loki_client(self) -> LokiClient:
+        return self._loki
+
+    @property
     def mode(self) -> str:
         return "live"
 
     def source_health(self) -> list:
         return list(self._health_cache)
+
+    def refresh_pipeline_health(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        if check_metrics_pipeline(self._prometheus, self._service):
+            self._record_health(healthy_source(TelemetrySourceKind.METRICS))
+            states["metrics"] = TelemetrySourceStatus.HEALTHY.value
+        else:
+            self._record_health(
+                unavailable_source(
+                    TelemetrySourceKind.METRICS,
+                    error_category="metrics_pipeline_unavailable",
+                )
+            )
+            states["metrics"] = TelemetrySourceStatus.UNAVAILABLE.value
+
+        if wait_for_loki_ready(self._loki, max_attempts=3, base_delay_seconds=1.0):
+            states["loki_api"] = TelemetrySourceStatus.HEALTHY.value
+        else:
+            states["loki_api"] = TelemetrySourceStatus.UNAVAILABLE.value
+
+        try:
+            logs = self.get_service_logs(self._service)
+            if logs:
+                states["logs"] = TelemetrySourceStatus.HEALTHY.value
+            else:
+                states["logs"] = TelemetrySourceStatus.UNAVAILABLE.value
+        except Exception:
+            states["logs"] = TelemetrySourceStatus.UNAVAILABLE.value
+
+        states["deployments"] = TelemetrySourceStatus.HEALTHY.value
+        return states
 
     def _record_health(self, health) -> None:
         existing = {item.source: item for item in self._health_cache}
@@ -70,13 +113,22 @@ class LiveTelemetryBackend:
                 )
             )
             raise RuntimeError("Live metrics source is unavailable")
+        if not check_metrics_pipeline(self._prometheus, service):
+            self._record_health(
+                unavailable_source(
+                    TelemetrySourceKind.METRICS,
+                    error_category="metrics_pipeline_unavailable",
+                )
+            )
+            raise RuntimeError("Metrics pipeline is not producing fresh observations")
 
         def _fetch() -> MetricResponse:
-            p95 = self._prometheus.query_p95_latency_ms(service)
-            error_rate = self._prometheus.query_error_rate_percent(service)
-            if p95 is None or error_rate is None:
+            p95_obs = self._prometheus.query_p95_latency_ms_with_timestamp(service)
+            error_obs = self._prometheus.query_error_rate_percent_with_timestamp(service)
+            if p95_obs is None or error_obs is None:
                 raise RuntimeError("Metrics query returned no data")
-            observed_at = utc_now()
+            p95, observed_at = p95_obs
+            error_rate, _ = error_obs
             return MetricResponse(
                 service=service,
                 p95_latency_ms=p95,
@@ -110,6 +162,14 @@ class LiveTelemetryBackend:
                 )
             )
             raise RuntimeError("Live logs source is unavailable")
+        if not wait_for_loki_ready(self._loki, max_attempts=6, base_delay_seconds=1.0):
+            self._record_health(
+                unavailable_source(
+                    TelemetrySourceKind.LOGS,
+                    error_category="loki_not_ready",
+                )
+            )
+            raise RuntimeError("Loki is not ready for log queries")
 
         def _fetch() -> list[LogResponse]:
             entries = self._loki.query_logs(service)

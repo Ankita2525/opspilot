@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from prometheus_client import Counter, Histogram
 from pydantic import BaseModel
 
+from sandbox.common.otel_logging import setup_otel_logging
 from sandbox.common.telemetry import (
     RevisionState,
     StructuredLogger,
@@ -110,6 +111,7 @@ def _validate_token(token: str) -> dict:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    setup_otel_logging(SERVICE_NAME)
     yield
 
 
