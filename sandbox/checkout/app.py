@@ -91,6 +91,17 @@ def _ensure_schema() -> None:
         )
 
 
+def _hold_one_connection() -> None:
+    try:
+        conn = psycopg.connect(DATABASE_URL)
+        conn.execute("BEGIN")
+        conn.execute("SELECT pg_sleep(300)")
+        with _holder_lock:
+            _holder_connections.append(conn)
+    except Exception:
+        return
+
+
 def _hold_connections_if_faulty() -> None:
     global _holder_connections
     with _holder_lock:
@@ -103,14 +114,8 @@ def _hold_connections_if_faulty() -> None:
         if not revision_state.is_faulty:
             return
         max_hold = max(0, _pool_max_size() - 1)
-        for _ in range(max_hold):
-            try:
-                conn = psycopg.connect(DATABASE_URL)
-                conn.execute("BEGIN")
-                conn.execute("SELECT pg_sleep(300)")
-                _holder_connections.append(conn)
-            except Exception:
-                break
+    for _ in range(max_hold):
+        threading.Thread(target=_hold_one_connection, daemon=True).start()
 
 
 def _update_pool_gauges() -> None:

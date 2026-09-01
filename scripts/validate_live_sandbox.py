@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import sys
 
-from backend.app.models.deterministic_provider import DeterministicModelProvider
 from backend.app.live.orchestrator import LiveIncidentOrchestrator
 from sandbox.scenarios import (
     AUTH_TOKEN_VALIDATION_REGRESSION_ID,
