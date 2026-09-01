@@ -1,4 +1,5 @@
 from backend.app.tools.diagnostics import DiagnosticTools
+from backend.app.tools.remediation import RemediationTools
 from backend.app.tools.schemas import (
     DeploymentResponse,
     LogResponse,
@@ -7,9 +8,10 @@ from backend.app.tools.schemas import (
 )
 
 __all__ = [
-    "DiagnosticTools",
     "DeploymentResponse",
+    "DiagnosticTools",
     "LogResponse",
     "MetricResponse",
+    "RemediationTools",
     "ServiceHealthResponse",
 ]

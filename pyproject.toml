@@ -6,13 +6,16 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.141.1",
     "groq>=1.7.0",
+    "httpx>=0.28.1",
     "langgraph>=1.2.11",
     "langgraph-checkpoint-postgres==3.1.2",
     "mcp[cli]>=2,<3",
     "opentelemetry-api>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
-    "psycopg[binary]>=3.2",
+    "prometheus-client>=0.21.1",
+    "psycopg[binary,pool]>=3.2",
     "pydantic>=2.13.5",
+    "pyjwt>=2.10.1",
     "uvicorn[standard]>=0.52.4",
 ]
 

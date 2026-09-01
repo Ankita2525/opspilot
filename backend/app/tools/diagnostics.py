@@ -1,36 +1,44 @@
-from simulator.environment import SimulatedEnvironment
-
 from backend.app.observability.tracing import get_tracer
+from backend.app.telemetry.backend import TelemetryBackend
 from backend.app.tools.schemas import (
     DeploymentResponse,
     LogResponse,
     MetricResponse,
     ServiceHealthResponse,
 )
+from simulator.environment import SimulatedEnvironment
 
 
 class DiagnosticTools:
-    """Read-only diagnostic access to a simulated production environment."""
+    """Read-only diagnostic access to a telemetry backend."""
 
-    def __init__(self, environment: SimulatedEnvironment) -> None:
-        self._environment = environment
+    def __init__(self, backend: TelemetryBackend | SimulatedEnvironment) -> None:
+        if isinstance(backend, SimulatedEnvironment):
+            from backend.app.telemetry.simulator import SimulatorTelemetryBackend
+
+            backend = SimulatorTelemetryBackend(backend)
+        self._backend = backend
+
+    @property
+    def telemetry_mode(self) -> str:
+        return self._backend.mode
+
+    def source_health(self):
+        return self._backend.source_health()
 
     def query_metrics(self, service: str) -> MetricResponse:
         with get_tracer().start_as_current_span("opspilot.tool.query_metrics") as span:
             span.set_attribute("opspilot.service", service)
             span.set_attribute("opspilot.tool", "query_metrics")
-            snapshot = self._environment.query_metrics(service)
-            return MetricResponse.model_validate(snapshot, from_attributes=True)
+            span.set_attribute("opspilot.telemetry_mode", self.telemetry_mode)
+            return self._backend.query_metrics(service)
 
     def get_service_logs(self, service: str) -> list[LogResponse]:
         with get_tracer().start_as_current_span("opspilot.tool.get_service_logs") as span:
             span.set_attribute("opspilot.service", service)
             span.set_attribute("opspilot.tool", "get_service_logs")
-            events = self._environment.get_logs(service)
-            return [
-                LogResponse.model_validate(event, from_attributes=True)
-                for event in events
-            ]
+            span.set_attribute("opspilot.telemetry_mode", self.telemetry_mode)
+            return self._backend.get_service_logs(service)
 
     def get_recent_deployments(self, service: str) -> list[DeploymentResponse]:
         with get_tracer().start_as_current_span(
@@ -38,11 +46,8 @@ class DiagnosticTools:
         ) as span:
             span.set_attribute("opspilot.service", service)
             span.set_attribute("opspilot.tool", "get_recent_deployments")
-            events = self._environment.get_recent_deployments(service)
-            return [
-                DeploymentResponse.model_validate(event, from_attributes=True)
-                for event in events
-            ]
+            span.set_attribute("opspilot.telemetry_mode", self.telemetry_mode)
+            return self._backend.get_recent_deployments(service)
 
     def get_service_health(self, service: str) -> ServiceHealthResponse:
         with get_tracer().start_as_current_span(
@@ -50,6 +55,7 @@ class DiagnosticTools:
         ) as span:
             span.set_attribute("opspilot.service", service)
             span.set_attribute("opspilot.tool", "get_service_health")
-            health = self._environment.get_service_health(service)
+            span.set_attribute("opspilot.telemetry_mode", self.telemetry_mode)
+            health = self._backend.get_service_health(service)
             span.set_attribute("opspilot.healthy", health.healthy)
-            return ServiceHealthResponse.model_validate(health, from_attributes=True)
+            return health

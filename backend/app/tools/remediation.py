@@ -4,6 +4,7 @@ from backend.app.observability.tracing import get_tracer
 from backend.app.safety.approvals import ApprovalService
 from backend.app.safety.models import ApprovalStatus, RemediationProposal, RiskLevel
 from backend.app.safety.policy import ActionPolicy
+from backend.app.telemetry.remediation import RemediationBackend
 from simulator.environment import SimulatedEnvironment
 
 ROLLBACK_ACTION = "rollback_deployment"
@@ -23,10 +24,16 @@ class RemediationTools:
 
     def __init__(
         self,
-        environment: SimulatedEnvironment,
+        backend: RemediationBackend | SimulatedEnvironment,
         approvals: ApprovalService,
     ) -> None:
-        self._environment = environment
+        if isinstance(backend, SimulatedEnvironment):
+            from backend.app.telemetry.simulator_remediation import (
+                SimulatorRemediationBackend,
+            )
+
+            backend = SimulatorRemediationBackend(backend)
+        self._backend = backend
         self._approvals = approvals
         self._policy = ActionPolicy()
 
@@ -70,7 +77,7 @@ class RemediationTools:
                 raise PermissionError("Rollback has not been approved.")
 
             version = proposal.parameters["version"]
-            self._environment.rollback_deployment(proposal.service, version)
+            self._backend.rollback_deployment(proposal.service, version)
             result = RollbackExecutionResult(
                 success=True,
                 proposal_id=proposal.proposal_id,

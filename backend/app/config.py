@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from backend.app.models.deterministic_provider import DeterministicModelProvider
 from backend.app.models.groq_provider import DEFAULT_GROQ_MODEL, GroqModelProvider
 from backend.app.models.provider import ModelProvider
+from backend.app.telemetry.models import TelemetryMode
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
@@ -43,6 +44,10 @@ class OpsPilotSettings(BaseModel):
     groq_model: str = DEFAULT_GROQ_MODEL
     database_url: str | None = Field(default=None, repr=False)
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
+    telemetry_mode: TelemetryMode = TelemetryMode.REFERENCE
+    prometheus_url: str | None = None
+    loki_url: str | None = None
+    sandbox_control_token: str | None = Field(default=None, repr=False)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -95,6 +100,10 @@ class OpsPilotSettings(BaseModel):
             groq_model=env.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip(),
             database_url=_optional(env.get("DATABASE_URL")),
             cors_origins=env.get("OPSPILOT_CORS_ORIGINS", ",".join(DEFAULT_CORS_ORIGINS)),
+            telemetry_mode=_parse_telemetry_mode(env.get("OPSPILOT_TELEMETRY_MODE", "reference")),
+            prometheus_url=_optional(env.get("OPSPILOT_PROMETHEUS_URL")),
+            loki_url=_optional(env.get("OPSPILOT_LOKI_URL")),
+            sandbox_control_token=_optional(env.get("SANDBOX_CONTROL_TOKEN")),
         )
         settings.validate_runtime()
         return settings
@@ -108,6 +117,23 @@ class OpsPilotSettings(BaseModel):
             raise ConfigurationError(
                 "DATABASE_URL is required when OPSPILOT_ENV=production."
             )
+        if self.telemetry_mode is TelemetryMode.LIVE:
+            if not self.prometheus_url:
+                raise ConfigurationError(
+                    "OPSPILOT_PROMETHEUS_URL is required when OPSPILOT_TELEMETRY_MODE=live."
+                )
+            if not self.loki_url:
+                raise ConfigurationError(
+                    "OPSPILOT_LOKI_URL is required when OPSPILOT_TELEMETRY_MODE=live."
+                )
+            if not self.sandbox_control_token:
+                raise ConfigurationError(
+                    "SANDBOX_CONTROL_TOKEN is required when OPSPILOT_TELEMETRY_MODE=live."
+                )
+
+    @property
+    def is_live_telemetry_mode(self) -> bool:
+        return self.telemetry_mode is TelemetryMode.LIVE
 
     @property
     def uses_postgres(self) -> bool:
@@ -131,7 +157,17 @@ class OpsPilotSettings(BaseModel):
             "environment": self.environment.value,
             "model_provider": self.model_provider.value,
             "database": database_status,
+            "telemetry_mode": self.telemetry_mode.value,
         }
+
+
+def _parse_telemetry_mode(value: str) -> TelemetryMode:
+    try:
+        return TelemetryMode(value.strip().lower())
+    except ValueError as exc:
+        raise ConfigurationError(
+            "OPSPILOT_TELEMETRY_MODE must be 'reference' or 'live'."
+        ) from exc
 
 
 def _required(environ: Mapping[str, str], key: str) -> str:
