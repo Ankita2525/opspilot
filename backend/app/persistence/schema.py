@@ -67,6 +67,57 @@ CREATE INDEX IF NOT EXISTS idx_evaluations_incident_id_created_at
 ON evaluations (incident_id, created_at)
 """
 
+CREATE_SANDBOX_LEASE_HOLDER_TABLE = """
+CREATE TABLE IF NOT EXISTS sandbox_lease_holder (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    lease_id TEXT,
+    session_id TEXT,
+    incident_id TEXT,
+    acquired_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    renewed_at TIMESTAMPTZ,
+    state TEXT NOT NULL DEFAULT 'idle'
+)
+"""
+
+SEED_SANDBOX_LEASE_HOLDER = """
+INSERT INTO sandbox_lease_holder (id, state)
+VALUES (1, 'idle')
+ON CONFLICT (id) DO NOTHING
+"""
+
+CREATE_DEMO_SESSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS demo_sessions (
+    session_id TEXT PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL,
+    live_incident_count INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+CREATE_QUOTA_COUNTERS_TABLE = """
+CREATE TABLE IF NOT EXISTS quota_counters (
+    counter_key TEXT NOT NULL,
+    counter_date DATE NOT NULL,
+    counter_value INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (counter_key, counter_date)
+)
+"""
+
+ALTER_INCIDENTS_ADD_SESSION_ID = """
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS session_id TEXT
+"""
+
+ALTER_INCIDENTS_ADD_EXPIRES_AT = """
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
+"""
+
+CREATE_INCIDENTS_EXPIRES_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_incidents_expires_at
+ON incidents (expires_at)
+WHERE expires_at IS NOT NULL
+"""
+
 SCHEMA_STATEMENTS = (
     CREATE_INCIDENTS_TABLE,
     CREATE_APPROVALS_TABLE,
@@ -75,6 +126,13 @@ SCHEMA_STATEMENTS = (
     CREATE_APPROVALS_INCIDENT_INDEX,
     CREATE_AUDIT_EVENTS_INCIDENT_TIMESTAMP_INDEX,
     CREATE_EVALUATIONS_INCIDENT_CREATED_INDEX,
+    CREATE_SANDBOX_LEASE_HOLDER_TABLE,
+    SEED_SANDBOX_LEASE_HOLDER,
+    CREATE_DEMO_SESSIONS_TABLE,
+    CREATE_QUOTA_COUNTERS_TABLE,
+    ALTER_INCIDENTS_ADD_SESSION_ID,
+    ALTER_INCIDENTS_ADD_EXPIRES_AT,
+    CREATE_INCIDENTS_EXPIRES_INDEX,
 )
 
 

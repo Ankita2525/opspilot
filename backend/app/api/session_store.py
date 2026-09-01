@@ -16,6 +16,7 @@ class IncidentSession:
     scenario_id: str
     created_at: datetime
     telemetry_mode: str = "reference"
+    owner_session_id: str | None = None
     environment: SimulatedEnvironment | None = None
     live_session: LiveIncidentSession | None = None
 

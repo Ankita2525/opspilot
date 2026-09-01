@@ -32,6 +32,8 @@ class IncidentLifecyclePersistence:
         incident_id: str,
         scenario_id: str,
         affected_service: str,
+        session_id: str | None = None,
+        expires_at: datetime | None = None,
     ) -> datetime:
         timestamp = self._now()
         self._repository.save_incident(
@@ -45,6 +47,8 @@ class IncidentLifecyclePersistence:
                 recommended_action=None,
                 selected_skills=[],
                 resolved=False,
+                session_id=session_id,
+                expires_at=expires_at,
             )
         )
         self._append_audit(

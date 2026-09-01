@@ -22,8 +22,10 @@ INSERT INTO incidents (
     updated_at,
     recommended_action,
     selected_skills,
-    resolved
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+    resolved,
+    session_id,
+    expires_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
 ON CONFLICT (incident_id) DO UPDATE SET
     scenario_id = EXCLUDED.scenario_id,
     affected_service = EXCLUDED.affected_service,
@@ -32,7 +34,9 @@ ON CONFLICT (incident_id) DO UPDATE SET
     updated_at = EXCLUDED.updated_at,
     recommended_action = EXCLUDED.recommended_action,
     selected_skills = EXCLUDED.selected_skills,
-    resolved = EXCLUDED.resolved
+    resolved = EXCLUDED.resolved,
+    session_id = EXCLUDED.session_id,
+    expires_at = EXCLUDED.expires_at
 """
 
 GET_INCIDENT_SQL = """
@@ -45,7 +49,9 @@ SELECT
     updated_at,
     recommended_action,
     selected_skills,
-    resolved
+    resolved,
+    session_id,
+    expires_at
 FROM incidents
 WHERE incident_id = %s
 """
@@ -60,7 +66,9 @@ SELECT
     updated_at,
     recommended_action,
     selected_skills,
-    resolved
+    resolved,
+    session_id,
+    expires_at
 FROM incidents
 ORDER BY created_at ASC, incident_id ASC
 """
@@ -179,6 +187,15 @@ WHERE incident_id = %s
 ORDER BY created_at ASC, evaluation_id ASC
 """
 
+LIST_EXPIRED_INCIDENTS_SQL = """
+SELECT incident_id, session_id
+FROM incidents
+WHERE expires_at IS NOT NULL
+  AND expires_at <= %s
+  AND status NOT IN ('resolved', 'rejected', 'remediation_failed', 'blocked_by_telemetry', 'abandoned', 'expired')
+ORDER BY expires_at ASC
+"""
+
 PARAMETERIZED_SQL = (
     SAVE_INCIDENT_SQL,
     GET_INCIDENT_SQL,
@@ -214,6 +231,8 @@ class PostgresOpsPilotRepository:
                 record.recommended_action,
                 to_json(list(record.selected_skills)),
                 record.resolved,
+                record.session_id,
+                to_utc(record.expires_at) if record.expires_at else None,
             ),
         )
 
@@ -294,6 +313,13 @@ class PostgresOpsPilotRepository:
             for row in self._fetchall(LIST_EVALUATIONS_SQL, (incident_id,))
         ]
 
+    def list_expired_incidents(self, as_of: datetime) -> list[tuple[str, str | None]]:
+        rows = self._fetchall(LIST_EXPIRED_INCIDENTS_SQL, (to_utc(as_of),))
+        return [
+            (str(row["incident_id"]), _optional_str(row.get("session_id")))
+            for row in rows
+        ]
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._database_url, row_factory=dict_row)
 
@@ -350,6 +376,12 @@ def incident_from_row(row: Mapping[str, object]) -> IncidentRecord:
         recommended_action=_optional_str(row["recommended_action"]),
         selected_skills=[str(item) for item in skills],
         resolved=bool(row["resolved"]),
+        session_id=_optional_str(row.get("session_id")),
+        expires_at=(
+            from_utc(_require_datetime(row["expires_at"]))
+            if row.get("expires_at") is not None
+            else None
+        ),
     )
 
 

@@ -199,7 +199,7 @@ def test_dml_sql_is_parameterized() -> None:
         assert "{" not in statement
         assert "}" not in statement
 
-    assert SAVE_INCIDENT_SQL.count("%s") == 9
+    assert SAVE_INCIDENT_SQL.count("%s") == 11
     assert GET_INCIDENT_SQL.count("%s") == 1
     assert LIST_INCIDENTS_SQL.count("%s") == 0
     assert SAVE_APPROVAL_SQL.count("%s") == 9

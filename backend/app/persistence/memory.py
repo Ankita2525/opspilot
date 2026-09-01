@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from backend.app.persistence.models import (
@@ -64,3 +66,26 @@ class InMemoryOpsPilotRepository:
             for record in self._evaluations.values()
             if record.incident_id == incident_id
         ]
+
+    def list_expired_incidents(self, as_of: datetime) -> list[tuple[str, str | None]]:
+        from datetime import timezone
+
+        expired: list[tuple[str, str | None]] = []
+        terminal = {
+            "resolved",
+            "rejected",
+            "remediation_failed",
+            "blocked_by_telemetry",
+            "abandoned",
+            "expired",
+        }
+        as_of_utc = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+        for record in self._incidents.values():
+            if record.expires_at is None:
+                continue
+            exp = record.expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= as_of_utc and record.status not in terminal:
+                expired.append((record.incident_id, record.session_id))
+        return expired
