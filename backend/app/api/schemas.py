@@ -21,6 +21,11 @@ class ReadyResponse(BaseModel):
     status: Literal["ready", "not_ready"]
     database: str
     model_provider: str
+    lease_subsystem: str = "not_configured"
+    live_sandbox: str = "not_required"
+    prometheus: str = "not_required"
+    loki: str = "not_required"
+    ai_capacity: str = "available"
 
 
 class ScenarioSummary(BaseModel):
@@ -35,6 +40,7 @@ class StartIncidentRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     scenario_id: str
+    turnstile_token: str | None = None
 
 
 class SubmitApprovalRequest(BaseModel):
