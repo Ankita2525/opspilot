@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from enum import Enum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -48,6 +48,24 @@ class OpsPilotSettings(BaseModel):
     prometheus_url: str | None = None
     loki_url: str | None = None
     sandbox_control_token: str | None = Field(default=None, repr=False)
+    # Public sandbox hardening
+    session_cookie_secure: bool = False
+    lease_ttl_seconds: int = 600
+    incident_ttl_seconds: int = 1800
+    turnstile_required: bool = False
+    turnstile_secret_key: str | None = Field(default=None, repr=False)
+    turnstile_site_key: str | None = None
+    rate_limit_burst_per_ip: int = 10
+    rate_limit_window_seconds: float = 60.0
+    quota_max_live_incidents_per_session: int = 3
+    quota_max_model_calls_per_incident: int = 5
+    quota_max_model_calls_per_session_per_day: int = 20
+    quota_global_daily_model_call_cap: int = 500
+    cleanup_interval_seconds: float = 30.0
+    public_domain: str | None = None
+    session_cookie_samesite: Literal["lax", "none", "strict"] = "lax"
+    session_cookie_domain: str | None = None
+    trust_proxy_headers: bool = False
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -104,6 +122,45 @@ class OpsPilotSettings(BaseModel):
             prometheus_url=_optional(env.get("OPSPILOT_PROMETHEUS_URL")),
             loki_url=_optional(env.get("OPSPILOT_LOKI_URL")),
             sandbox_control_token=_optional(env.get("SANDBOX_CONTROL_TOKEN")),
+            session_cookie_secure=_parse_bool(
+                env.get("OPSPILOT_SESSION_COOKIE_SECURE", "false")
+            ),
+            lease_ttl_seconds=_parse_int(env.get("OPSPILOT_LEASE_TTL_SECONDS", "600")),
+            incident_ttl_seconds=_parse_int(
+                env.get("OPSPILOT_INCIDENT_TTL_SECONDS", "1800")
+            ),
+            turnstile_required=_parse_bool(env.get("OPSPILOT_TURNSTILE_REQUIRED", "false")),
+            turnstile_secret_key=_optional(env.get("OPSPILOT_TURNSTILE_SECRET_KEY")),
+            turnstile_site_key=_optional(env.get("OPSPILOT_TURNSTILE_SITE_KEY")),
+            rate_limit_burst_per_ip=_parse_int(
+                env.get("OPSPILOT_RATE_LIMIT_BURST_PER_IP", "10")
+            ),
+            rate_limit_window_seconds=_parse_float(
+                env.get("OPSPILOT_RATE_LIMIT_WINDOW_SECONDS", "60")
+            ),
+            quota_max_live_incidents_per_session=_parse_int(
+                env.get("OPSPILOT_QUOTA_MAX_LIVE_INCIDENTS_PER_SESSION", "3")
+            ),
+            quota_max_model_calls_per_incident=_parse_int(
+                env.get("OPSPILOT_QUOTA_MAX_MODEL_CALLS_PER_INCIDENT", "5")
+            ),
+            quota_max_model_calls_per_session_per_day=_parse_int(
+                env.get("OPSPILOT_QUOTA_MAX_MODEL_CALLS_PER_SESSION_PER_DAY", "20")
+            ),
+            quota_global_daily_model_call_cap=_parse_int(
+                env.get("OPSPILOT_QUOTA_GLOBAL_DAILY_MODEL_CALL_CAP", "500")
+            ),
+            cleanup_interval_seconds=_parse_float(
+                env.get("OPSPILOT_CLEANUP_INTERVAL_SECONDS", "30")
+            ),
+            public_domain=_optional(env.get("OPSPILOT_PUBLIC_DOMAIN")),
+            session_cookie_samesite=_parse_samesite(
+                env.get("OPSPILOT_SESSION_COOKIE_SAMESITE", "lax")
+            ),
+            session_cookie_domain=_optional(env.get("OPSPILOT_SESSION_COOKIE_DOMAIN")),
+            trust_proxy_headers=_parse_bool(
+                env.get("OPSPILOT_TRUST_PROXY_HEADERS", "false")
+            ),
         )
         settings.validate_runtime()
         return settings
@@ -153,12 +210,15 @@ class OpsPilotSettings(BaseModel):
 
     def safe_summary(self) -> dict[str, str]:
         database_status = "configured" if self.database_url else "not_configured"
-        return {
+        summary = {
             "environment": self.environment.value,
             "model_provider": self.model_provider.value,
             "database": database_status,
             "telemetry_mode": self.telemetry_mode.value,
         }
+        if self.turnstile_site_key:
+            summary["turnstile_site_key"] = self.turnstile_site_key
+        return summary
 
 
 def _parse_telemetry_mode(value: str) -> TelemetryMode:
@@ -182,3 +242,24 @@ def _optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int(value: str) -> int:
+    return int(value.strip())
+
+
+def _parse_float(value: str) -> float:
+    return float(value.strip())
+
+
+def _parse_samesite(value: str) -> Literal["lax", "none", "strict"]:
+    normalized = value.strip().lower()
+    if normalized not in {"lax", "none", "strict"}:
+        raise ConfigurationError(
+            "OPSPILOT_SESSION_COOKIE_SAMESITE must be 'lax', 'none', or 'strict'."
+        )
+    return normalized  # type: ignore[return-value]

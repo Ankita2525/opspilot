@@ -12,6 +12,7 @@ const TERMINAL_EVENT_TYPES = new Set([
   "approval_required",
   "incident_completed",
   "incident_failed",
+  "investigation_blocked",
 ]);
 
 export async function streamIncident(options: {
@@ -23,6 +24,7 @@ export async function streamIncident(options: {
   try {
     response = await fetch(`${API_BASE_URL}/api/incidents/stream`, {
       method: "POST",
+      credentials: "include",
       headers: {
         Accept: "text/event-stream",
         "Content-Type": "application/json",

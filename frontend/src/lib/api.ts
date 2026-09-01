@@ -13,6 +13,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
+      credentials: "include",
       ...init,
       headers: {
         Accept: "application/json",
@@ -89,7 +90,17 @@ export type RuntimeSummary = {
   model_provider: string;
   database: string;
   telemetry_mode: string;
+  turnstile_site_key?: string;
 };
+
+export type SandboxStatus = {
+  state: string;
+  retry_after_seconds?: number;
+};
+
+export function getSandboxStatus(): Promise<SandboxStatus> {
+  return request<SandboxStatus>("/api/sandbox/status");
+}
 
 export function getRuntimeSummary(): Promise<RuntimeSummary> {
   return request<RuntimeSummary>("/api/runtime");

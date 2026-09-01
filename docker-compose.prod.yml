@@ -1,0 +1,233 @@
+# Production Compose — single VM, segmented Docker networks, Caddy TLS termination.
+# Public host ports: 80, 443 (Caddy only).
+#
+# Networks:
+#   ingress  — Caddy public ingress (published ports)
+#   sandbox  — internal-only sandbox telemetry mesh (no Internet)
+#   egress   — services that require outbound Internet (Neon, Groq, Grafana, Turnstile)
+#
+# OpsPilot runs exactly one Uvicorn worker (see Dockerfile CMD).
+
+services:
+  caddy:
+    image: caddy:2.9.1-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      OPSPILOT_PUBLIC_DOMAIN: ${OPSPILOT_PUBLIC_DOMAIN:?Set OPSPILOT_PUBLIC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:-internal@example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ingress
+      - egress
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      OPSPILOT_ENV: production
+      OPSPILOT_MODEL_PROVIDER: ${OPSPILOT_MODEL_PROVIDER:?Set OPSPILOT_MODEL_PROVIDER}
+      OPSPILOT_TELEMETRY_MODE: live
+      OPSPILOT_PROMETHEUS_URL: http://prometheus:9090
+      OPSPILOT_LOKI_URL: ${OPSPILOT_LOKI_URL:?Set OPSPILOT_LOKI_URL}
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN}
+      CHECKOUT_API_URL: http://checkout-api:8081
+      AUTH_SERVICE_URL: http://auth-service:8082
+      PAYMENTS_SERVICE_URL: http://payments-service:8083
+      GROQ_API_KEY: ${GROQ_API_KEY:?Set GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      OPSPILOT_CORS_ORIGINS: ${OPSPILOT_CORS_ORIGINS:?Set OPSPILOT_CORS_ORIGINS}
+      OPSPILOT_SESSION_COOKIE_SECURE: "true"
+      OPSPILOT_SESSION_COOKIE_SAMESITE: ${OPSPILOT_SESSION_COOKIE_SAMESITE:-none}
+      OPSPILOT_SESSION_COOKIE_DOMAIN: ${OPSPILOT_SESSION_COOKIE_DOMAIN:-}
+      OPSPILOT_TRUST_PROXY_HEADERS: "true"
+      OPSPILOT_TURNSTILE_REQUIRED: ${OPSPILOT_TURNSTILE_REQUIRED:-true}
+      OPSPILOT_TURNSTILE_SECRET_KEY: ${OPSPILOT_TURNSTILE_SECRET_KEY:-}
+      OPSPILOT_TURNSTILE_SITE_KEY: ${OPSPILOT_TURNSTILE_SITE_KEY:-}
+      OPSPILOT_PUBLIC_DOMAIN: ${OPSPILOT_PUBLIC_DOMAIN:-}
+      OPSPILOT_LEASE_TTL_SECONDS: ${OPSPILOT_LEASE_TTL_SECONDS:-600}
+      OPSPILOT_INCIDENT_TTL_SECONDS: ${OPSPILOT_INCIDENT_TTL_SECONDS:-1800}
+      OPSPILOT_RATE_LIMIT_BURST_PER_IP: ${OPSPILOT_RATE_LIMIT_BURST_PER_IP:-10}
+      OPSPILOT_QUOTA_GLOBAL_DAILY_MODEL_CALL_CAP: ${OPSPILOT_QUOTA_GLOBAL_DAILY_MODEL_CALL_CAP:-500}
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - egress
+      - sandbox
+    depends_on:
+      checkout-api:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    environment:
+      GRAFANA_CLOUD_LOKI_ENDPOINT: ${GRAFANA_CLOUD_LOKI_ENDPOINT:-}
+      GRAFANA_CLOUD_LOKI_USERNAME: ${GRAFANA_CLOUD_LOKI_USERNAME:-}
+      GRAFANA_CLOUD_LOKI_API_KEY: ${GRAFANA_CLOUD_LOKI_API_KEY:-}
+    networks:
+      - egress
+      - sandbox
+
+  checkout-api:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "sandbox.checkout.app:app", "--host", "0.0.0.0", "--port", "8081"]
+    environment:
+      SANDBOX_SERVICE_NAME: checkout-api
+      CHECKOUT_DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - sandbox
+      - egress
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "sandbox.auth.app:app", "--host", "0.0.0.0", "--port", "8082"]
+    environment:
+      SANDBOX_SERVICE_NAME: auth-service
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sandbox
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  provider-service:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "sandbox.provider.app:app", "--host", "0.0.0.0", "--port", "8084"]
+    environment:
+      SANDBOX_SERVICE_NAME: provider-service
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sandbox
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  payments-service:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "sandbox.payments.app:app", "--host", "0.0.0.0", "--port", "8083"]
+    environment:
+      SANDBOX_SERVICE_NAME: payments-service
+      PROVIDER_SERVICE_URL: http://provider-service:8084
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sandbox
+    depends_on:
+      provider-service:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+      - --storage.tsdb.retention.size=512MB
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - sandbox
+    depends_on:
+      checkout-api:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      payments-service:
+        condition: service_healthy
+
+networks:
+  ingress:
+    driver: bridge
+  sandbox:
+    driver: bridge
+    internal: true
+  egress:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
+  prometheus-data:

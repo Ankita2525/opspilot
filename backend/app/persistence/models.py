@@ -17,6 +17,8 @@ class IncidentRecord(BaseModel):
     recommended_action: str | None
     selected_skills: list[str]
     resolved: bool
+    session_id: str | None = None
+    expires_at: datetime | None = None
 
     @field_validator("selected_skills")
     @classmethod

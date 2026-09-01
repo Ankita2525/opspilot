@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -31,8 +31,27 @@ from backend.app.api.schemas import (
     StartIncidentRequest,
     SubmitApprovalRequest,
 )
+from backend.app.api.public_guard import (
+    acquire_global_lease,
+    check_rate_limit,
+    incident_expires_at,
+    release_global_lease,
+    renew_global_lease,
+    require_incident_owner,
+    resolve_demo_session,
+    sandbox_status,
+    verify_turnstile,
+)
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
+from backend.app.cleanup.worker import IncidentCleanupWorker
+from backend.app.readiness import assess_readiness
+from backend.app.sandbox.hardening import SandboxHardening, build_sandbox_hardening, list_expired_incidents
 from backend.app.config import DEFAULT_CORS_ORIGINS, OpsPilotSettings
+from backend.app.observability.metrics import (
+    approval_count,
+    cleanup_count,
+    live_incidents_completed,
+)
 from backend.app.telemetry.factory import build_live_runtime, build_reference_runtime
 from backend.app.telemetry.models import TelemetryMode
 from backend.app.events.emitter import InvestigationEventEmitter
@@ -62,6 +81,7 @@ def create_app(
     now: Callable[[], datetime] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     settings: OpsPilotSettings | None = None,
+    hardening: SandboxHardening | None = None,
 ) -> FastAPI:
     os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
     runtime = _resolve_runtime(
@@ -82,21 +102,52 @@ def create_app(
     persistence = IncidentLifecyclePersistence(resolved_repository, now=now)
     store = IncidentSessionStore()
     live_orchestrator = LiveIncidentOrchestrator()
+    resolved_hardening = hardening or build_sandbox_hardening(
+        resolved_settings,
+        resolved_repository,
+    )
+    if provider is not None:
+        resolved_provider = provider
+    elif resolved_hardening.enforce_live_guards:
+        resolved_provider = resolved_hardening.wrap_provider(runtime.provider)
+    else:
+        resolved_provider = runtime.provider
+
+    cleanup_worker: IncidentCleanupWorker | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        nonlocal cleanup_worker
         runtime.startup()
         app.state.checkpointer = runtime.checkpointer
         runtime.ensure_production_checkpointer_configured()
+        resolved_hardening.lease_store.expire_stale()
+        if resolved_hardening.enforce_live_guards:
+            cleanup_worker = IncidentCleanupWorker(
+                lease_store=resolved_hardening.lease_store,
+                session_store=store,
+                live_orchestrator=live_orchestrator,
+                repository=resolved_repository,
+                list_expired_incidents=lambda as_of: list_expired_incidents(
+                    resolved_repository,
+                    as_of,
+                ),
+                lease_ttl_seconds=resolved_hardening.lease_ttl_seconds,
+                interval_seconds=resolved_hardening.cleanup_interval_seconds,
+            )
+            cleanup_worker.start()
         try:
             yield
         finally:
+            if cleanup_worker is not None:
+                await cleanup_worker.stop()
             runtime.shutdown()
 
     app = FastAPI(title="OpsPilot", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -106,6 +157,7 @@ def create_app(
     app.state.checkpointer = resolved_checkpointer
     app.state.runtime = runtime
     app.state.settings = resolved_settings
+    app.state.hardening = resolved_hardening
 
     def _telemetry_mode() -> TelemetryMode:
         if resolved_settings is None:
@@ -119,11 +171,25 @@ def create_app(
         approvals: ApprovalService,
         events: InvestigationEventEmitter | None = None,
         verify_recovery_fn=None,
+        session_id: str | None = None,
+        incident_id: str | None = None,
     ) -> IncidentResponseCoordinator:
+        hypothesis_provider = resolved_provider
+        if session_id and incident_id and hasattr(resolved_provider, "with_context"):
+            hypothesis_provider = resolved_provider.with_context(
+                session_id=session_id,
+                incident_id=incident_id,
+            )
+        elif resolved_hardening.enforce_live_guards and incident_id:
+            hypothesis_provider = resolved_hardening.wrap_provider(
+                runtime.provider,
+                session_id=session_id,
+                incident_id=incident_id,
+            )
         return IncidentResponseCoordinator(
             investigation_workflow=InvestigationWorkflow(
                 tools=diagnostics,
-                hypothesis_engine=HypothesisEngine(resolved_provider),
+                hypothesis_engine=HypothesisEngine(hypothesis_provider),
                 events=events,
             ),
             remediation_workflow=RemediationApprovalWorkflow(
@@ -142,6 +208,8 @@ def create_app(
         *,
         live_session=None,
         verify_recovery_fn=None,
+        session_id: str | None = None,
+        incident_id: str | None = None,
     ):
         approvals = ApprovalService(repository=resolved_repository, now=now)
         if _telemetry_mode() is TelemetryMode.LIVE:
@@ -161,6 +229,8 @@ def create_app(
                     approvals=approvals,
                     events=events,
                     verify_recovery_fn=verify_recovery_fn,
+                    session_id=session_id,
+                    incident_id=incident_id,
                 ),
             )
         incident_runtime = build_reference_runtime(scenario_id, approvals)
@@ -172,6 +242,8 @@ def create_app(
                 approvals=approvals,
                 events=events,
                 verify_recovery_fn=verify_recovery_fn,
+                session_id=session_id,
+                incident_id=incident_id,
             ),
         )
 
@@ -181,6 +253,8 @@ def create_app(
         *,
         incident_id: str,
         live_session=None,
+        owner_session_id: str | None = None,
+        expires_at: datetime | None = None,
     ):
         verify_fn = None
         if live_session is not None:
@@ -193,12 +267,16 @@ def create_app(
             events=events,
             live_session=live_session,
             verify_recovery_fn=verify_fn,
+            session_id=owner_session_id,
+            incident_id=incident_id,
         )
         if live_session is not None and live_session.blocked:
             created_at = persistence.record_incident_created(
                 incident_id=incident_id,
                 scenario_id=scenario.id,
                 affected_service=scenario.affected_service,
+                session_id=owner_session_id,
+                expires_at=expires_at,
             )
             started = _blocked_live_start(
                 incident_id=incident_id,
@@ -216,6 +294,7 @@ def create_app(
                     created_at=created_at,
                     telemetry_mode="live",
                     live_session=live_session,
+                    owner_session_id=owner_session_id,
                 ),
             )
             return started
@@ -226,6 +305,8 @@ def create_app(
             incident_id=incident_id,
             scenario_id=scenario.id,
             affected_service=scenario.affected_service,
+            session_id=owner_session_id,
+            expires_at=expires_at,
         )
         started = coordinator.start(
             incident_id=incident_id,
@@ -246,6 +327,7 @@ def create_app(
                 created_at=created_at,
                 telemetry_mode="live" if live_session is not None else "reference",
                 live_session=live_session,
+                owner_session_id=owner_session_id,
             ),
         )
         return started
@@ -256,14 +338,14 @@ def create_app(
 
     @app.get("/ready", response_model=ReadyResponse)
     def ready() -> ReadyResponse:
-        database_status = runtime.database_status
-        model_provider = runtime.model_provider_name
-        is_ready = database_status in {"ready", "in_memory"}
-        return ReadyResponse(
-            status="ready" if is_ready else "not_ready",
-            database=database_status,
-            model_provider=model_provider,
-        )
+        report = assess_readiness(runtime, resolved_hardening)
+        payload = report.to_response()
+        return ReadyResponse(**payload)
+
+    @app.get("/api/sandbox/status")
+    def get_sandbox_status(request: Request, response: Response) -> dict:
+        resolve_demo_session(request, resolved_hardening, response)
+        return sandbox_status(resolved_hardening)
 
     @app.get("/api/scenarios", response_model=list[ScenarioSummary])
     def list_public_scenarios() -> list[ScenarioSummary]:
@@ -280,10 +362,16 @@ def create_app(
     def runtime_summary() -> dict:
         if resolved_settings is None:
             return {"telemetry_mode": "reference"}
-        return sanitize_public_instance(resolved_settings.safe_summary())
+        return resolved_settings.safe_summary()
 
     @app.post("/api/incidents/start", response_model=IncidentStartResponse)
-    def start_incident(body: StartIncidentRequest) -> IncidentStartResponse:
+    def start_incident(
+        body: StartIncidentRequest,
+        request: Request,
+        response: Response,
+    ) -> IncidentStartResponse:
+        check_rate_limit(request, resolved_hardening)
+        demo_session = resolve_demo_session(request, resolved_hardening, response)
         try:
             scenario = get_scenario(body.scenario_id)
         except ValueError as exc:
@@ -292,25 +380,57 @@ def create_app(
         incident_id = new_incident_id()
         live_session = None
         if _telemetry_mode() is TelemetryMode.LIVE:
+            verify_turnstile(
+                token=body.turnstile_token,
+                request=request,
+                hardening=resolved_hardening,
+            )
+            acquire_global_lease(
+                hardening=resolved_hardening,
+                session=demo_session,
+                incident_id=incident_id,
+            )
             try:
                 live_session = live_orchestrator.prepare(
                     incident_id=incident_id,
                     scenario_id=scenario.id,
                 )
             except RuntimeError as exc:
+                release_global_lease(
+                    hardening=resolved_hardening,
+                    session_id=demo_session.session_id,
+                    incident_id=incident_id,
+                )
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        started = _begin_incident(
-            scenario,
-            incident_id=incident_id,
-            live_session=live_session,
-        )
+        try:
+            started = _begin_incident(
+                scenario,
+                incident_id=incident_id,
+                live_session=live_session,
+                owner_session_id=demo_session.session_id,
+                expires_at=incident_expires_at(resolved_hardening),
+            )
+        except Exception:
+            if live_session is not None:
+                live_orchestrator.cleanup(live_session)
+                release_global_lease(
+                    hardening=resolved_hardening,
+                    session_id=demo_session.session_id,
+                    incident_id=incident_id,
+                )
+            raise
         investigation = started.investigation
         metrics = investigation["metrics"]
         hypothesis_result = investigation["hypothesis_result"]
         if metrics is None or hypothesis_result is None:
             if live_session is not None:
                 live_orchestrator.cleanup(live_session)
+                release_global_lease(
+                    hardening=resolved_hardening,
+                    session_id=demo_session.session_id,
+                    incident_id=incident_id,
+                )
             raise HTTPException(
                 status_code=500,
                 detail="Investigation completed without metrics or a hypothesis.",
@@ -334,26 +454,55 @@ def create_app(
         )
 
     @app.post("/api/incidents/stream")
-    async def stream_incident(body: StartIncidentRequest):
+    async def stream_incident(
+        body: StartIncidentRequest,
+        request: Request,
+        response: Response,
+    ):
+        check_rate_limit(request, resolved_hardening)
+        demo_session = resolve_demo_session(request, resolved_hardening, response)
         try:
             scenario = get_scenario(body.scenario_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         incident_id = new_incident_id()
+        expires_at = incident_expires_at(resolved_hardening)
+
+        if _telemetry_mode() is TelemetryMode.LIVE:
+            verify_turnstile(
+                token=body.turnstile_token,
+                request=request,
+                hardening=resolved_hardening,
+            )
+            acquire_global_lease(
+                hardening=resolved_hardening,
+                session=demo_session,
+                incident_id=incident_id,
+            )
 
         def begin(loaded, events, _incident_id=incident_id):
             live_session = None
             if _telemetry_mode() is TelemetryMode.LIVE:
-                live_session = live_orchestrator.prepare(
-                    incident_id=_incident_id,
-                    scenario_id=loaded.id,
-                    events=events,
-                )
+                try:
+                    live_session = live_orchestrator.prepare(
+                        incident_id=_incident_id,
+                        scenario_id=loaded.id,
+                        events=events,
+                    )
+                except RuntimeError:
+                    release_global_lease(
+                        hardening=resolved_hardening,
+                        session_id=demo_session.session_id,
+                        incident_id=_incident_id,
+                    )
+                    raise
             return _begin_incident(
                 loaded,
                 events,
                 incident_id=_incident_id,
                 live_session=live_session,
+                owner_session_id=demo_session.session_id,
+                expires_at=expires_at,
             )
 
         return streamed_incident_response(
@@ -370,7 +519,11 @@ def create_app(
     def submit_approval(
         incident_id: str,
         body: SubmitApprovalRequest,
+        request: Request,
+        response: Response,
     ) -> IncidentApprovalResponse:
+        check_rate_limit(request, resolved_hardening)
+        demo_session = resolve_demo_session(request, resolved_hardening, response)
         session = store.get_optional(incident_id)
         if session is None:
             session = _reconstruct_approval_session(
@@ -379,6 +532,20 @@ def create_app(
                 repository=resolved_repository,
                 runtime_factory=lambda scenario_id: _runtime_for_scenario(scenario_id),
             )
+        record = resolved_repository.get_incident(incident_id)
+        owner_id = session.owner_session_id or (
+            record.session_id if record is not None else None
+        )
+        require_incident_owner(
+            owner_session_id=owner_id,
+            requester_session_id=demo_session.session_id,
+            enforce=resolved_hardening.enforce_live_guards,
+        )
+        renew_global_lease(
+            hardening=resolved_hardening,
+            session_id=demo_session.session_id,
+            incident_id=incident_id,
+        )
         try:
             resumed = session.coordinator.resume(
                 remediation_thread_id=session.remediation_thread_id,
@@ -386,6 +553,7 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        approval_count.add(1, {"action": "approved" if body.approved else "rejected"})
         persistence.record_resume_result(
             incident_id=incident_id,
             proposal_id=session.proposal_id,
@@ -398,6 +566,13 @@ def create_app(
             "verification_pending",
         }:
             live_orchestrator.cleanup(session.live_session)
+            release_global_lease(
+                hardening=resolved_hardening,
+                session_id=demo_session.session_id,
+                incident_id=incident_id,
+            )
+            live_incidents_completed.add(1)
+            cleanup_count.add(1)
         return sanitize_public_instance(
             IncidentApprovalResponse(
                 incident_id=incident_id,
@@ -414,8 +589,22 @@ def create_app(
         "/api/incidents/{incident_id}/metrics",
         response_model=MetricResponse,
     )
-    def get_incident_metrics(incident_id: str) -> MetricResponse:
+    def get_incident_metrics(
+        incident_id: str,
+        request: Request,
+        response: Response,
+    ) -> MetricResponse:
+        demo_session = resolve_demo_session(request, resolved_hardening, response)
         session = _require_session(store, incident_id)
+        record = resolved_repository.get_incident(incident_id)
+        owner_id = session.owner_session_id or (
+            record.session_id if record is not None else None
+        )
+        require_incident_owner(
+            owner_session_id=owner_id,
+            requester_session_id=demo_session.session_id,
+            enforce=resolved_hardening.enforce_live_guards,
+        )
         if session.live_session is not None:
             return session.live_session.telemetry.query_metrics(session.affected_service)
         if session.environment is None:

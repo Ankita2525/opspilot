@@ -1,0 +1,46 @@
+{
+	email {$ACME_EMAIL:internal@example.com}
+}
+
+{$OPSPILOT_PUBLIC_DOMAIN:localhost} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	request_body {
+		max_size 1MB
+	}
+
+	@http path /*
+	handle @http {
+		redir https://{host}{uri} permanent
+	}
+}
+
+https://{$OPSPILOT_PUBLIC_DOMAIN:localhost} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	request_body {
+		max_size 1MB
+	}
+
+	reverse_proxy backend:8000 {
+		flush_interval -1
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+}

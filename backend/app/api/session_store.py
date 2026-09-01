@@ -16,6 +16,7 @@ class IncidentSession:
     scenario_id: str
     created_at: datetime
     telemetry_mode: str = "reference"
+    owner_session_id: str | None = None
     environment: SimulatedEnvironment | None = None
     live_session: LiveIncidentSession | None = None
 
@@ -46,6 +47,13 @@ class IncidentSessionStore:
 
     def has(self, incident_id: str) -> bool:
         return incident_id in self._sessions
+
+    def list_live_sessions(self) -> list[tuple[str, IncidentSession]]:
+        return [
+            (incident_id, session)
+            for incident_id, session in self._sessions.items()
+            if session.live_session is not None
+        ]
 
     def remove(self, incident_id: str) -> None:
         try:

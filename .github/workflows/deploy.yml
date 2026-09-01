@@ -1,0 +1,16 @@
+# Disabled deployment workflow — enable after VM and secrets are configured.
+name: Deploy (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: false  # Safety gate: set to true only when VM_SSH_HOST and deploy key are configured
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy over SSH
+        run: |
+          echo "Configure OPSPILOT_DEPLOY_HOST and SSH key secrets before enabling."
+          exit 1
