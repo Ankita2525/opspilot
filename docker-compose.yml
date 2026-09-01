@@ -23,6 +23,13 @@ services:
     environment:
       OPSPILOT_ENV: production
       OPSPILOT_MODEL_PROVIDER: ${OPSPILOT_MODEL_PROVIDER:?Set OPSPILOT_MODEL_PROVIDER to groq or deterministic}
+      OPSPILOT_TELEMETRY_MODE: ${OPSPILOT_TELEMETRY_MODE:-reference}
+      OPSPILOT_PROMETHEUS_URL: ${OPSPILOT_PROMETHEUS_URL:-http://prometheus:9090}
+      OPSPILOT_LOKI_URL: ${OPSPILOT_LOKI_URL:-http://loki:3100}
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      CHECKOUT_API_URL: http://checkout-api:8081
+      AUTH_SERVICE_URL: http://auth-service:8082
+      PAYMENTS_SERVICE_URL: http://payments-service:8083
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
       DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
@@ -51,5 +58,107 @@ services:
       backend:
         condition: service_healthy
 
+  checkout-api:
+    profiles: ["live"]
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    command: ["uvicorn", "sandbox.checkout.app:app", "--host", "0.0.0.0", "--port", "8081"]
+    environment:
+      SANDBOX_SERVICE_NAME: checkout-api
+      CHECKOUT_DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    profiles: ["live"]
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    command: ["uvicorn", "sandbox.auth.app:app", "--host", "0.0.0.0", "--port", "8082"]
+    environment:
+      SANDBOX_SERVICE_NAME: auth-service
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  provider-service:
+    profiles: ["live"]
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    command: ["uvicorn", "sandbox.provider.app:app", "--host", "0.0.0.0", "--port", "8084"]
+    environment:
+      SANDBOX_SERVICE_NAME: provider-service
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+    ports:
+      - "8084:8084"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  payments-service:
+    profiles: ["live"]
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    command: ["uvicorn", "sandbox.payments.app:app", "--host", "0.0.0.0", "--port", "8083"]
+    environment:
+      SANDBOX_SERVICE_NAME: payments-service
+      PROVIDER_SERVICE_URL: http://provider-service:8084
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+    ports:
+      - "8083:8083"
+    depends_on:
+      provider-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    profiles: ["live"]
+    image: prom/prometheus:v3.2.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      checkout-api:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      payments-service:
+        condition: service_healthy
+
+  loki:
+    profiles: ["live"]
+    image: grafana/loki:3.4.2
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - opspilot-loki-data:/loki
+    ports:
+      - "3100:3100"
+
 volumes:
   opspilot-postgres-data:
+  opspilot-loki-data:

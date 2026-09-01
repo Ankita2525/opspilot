@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: checkout-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["checkout-api:8081"]
+  - job_name: auth-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["auth-service:8082"]
+  - job_name: payments-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["payments-service:8083"]
+  - job_name: provider-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["provider-service:8084"]
