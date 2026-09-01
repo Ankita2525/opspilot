@@ -40,5 +40,7 @@ https://{$OPSPILOT_PUBLIC_DOMAIN:localhost} {
 
 	reverse_proxy backend:8000 {
 		flush_interval -1
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
 	}
 }

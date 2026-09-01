@@ -1,5 +1,12 @@
-# Production Compose — single VM, private sandbox network, Caddy TLS termination.
-# Public ports: 80, 443 (Caddy). Backend and sandbox services are internal only.
+# Production Compose — single VM, segmented Docker networks, Caddy TLS termination.
+# Public host ports: 80, 443 (Caddy only).
+#
+# Networks:
+#   ingress  — Caddy public ingress (published ports)
+#   sandbox  — internal-only sandbox telemetry mesh (no Internet)
+#   egress   — services that require outbound Internet (Neon, Groq, Grafana, Turnstile)
+#
+# OpsPilot runs exactly one Uvicorn worker (see Dockerfile CMD).
 
 services:
   caddy:
@@ -19,8 +26,8 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - public
-      - internal
+      - ingress
+      - egress
 
   backend:
     build:
@@ -42,6 +49,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       OPSPILOT_CORS_ORIGINS: ${OPSPILOT_CORS_ORIGINS:?Set OPSPILOT_CORS_ORIGINS}
       OPSPILOT_SESSION_COOKIE_SECURE: "true"
+      OPSPILOT_SESSION_COOKIE_SAMESITE: ${OPSPILOT_SESSION_COOKIE_SAMESITE:-none}
+      OPSPILOT_SESSION_COOKIE_DOMAIN: ${OPSPILOT_SESSION_COOKIE_DOMAIN:-}
+      OPSPILOT_TRUST_PROXY_HEADERS: "true"
       OPSPILOT_TURNSTILE_REQUIRED: ${OPSPILOT_TURNSTILE_REQUIRED:-true}
       OPSPILOT_TURNSTILE_SECRET_KEY: ${OPSPILOT_TURNSTILE_SECRET_KEY:-}
       OPSPILOT_TURNSTILE_SITE_KEY: ${OPSPILOT_TURNSTILE_SITE_KEY:-}
@@ -53,7 +63,7 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/ready"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -64,7 +74,8 @@ services:
           memory: 1G
           cpus: "1.0"
     networks:
-      - internal
+      - egress
+      - sandbox
     depends_on:
       checkout-api:
         condition: service_healthy
@@ -82,7 +93,8 @@ services:
       GRAFANA_CLOUD_LOKI_USERNAME: ${GRAFANA_CLOUD_LOKI_USERNAME:-}
       GRAFANA_CLOUD_LOKI_API_KEY: ${GRAFANA_CLOUD_LOKI_API_KEY:-}
     networks:
-      - internal
+      - egress
+      - sandbox
 
   checkout-api:
     build:
@@ -105,7 +117,8 @@ services:
         limits:
           memory: 256M
     networks:
-      - internal
+      - sandbox
+      - egress
     depends_on:
       otel-collector:
         condition: service_started
@@ -126,7 +139,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - internal
+      - sandbox
     depends_on:
       otel-collector:
         condition: service_started
@@ -147,7 +160,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - internal
+      - sandbox
     depends_on:
       otel-collector:
         condition: service_started
@@ -169,7 +182,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - internal
+      - sandbox
     depends_on:
       provider-service:
         condition: service_healthy
@@ -196,7 +209,7 @@ services:
         limits:
           memory: 512M
     networks:
-      - internal
+      - sandbox
     depends_on:
       checkout-api:
         condition: service_healthy
@@ -206,11 +219,13 @@ services:
         condition: service_healthy
 
 networks:
-  public:
+  ingress:
     driver: bridge
-  internal:
+  sandbox:
     driver: bridge
     internal: true
+  egress:
+    driver: bridge
 
 volumes:
   caddy-data:
