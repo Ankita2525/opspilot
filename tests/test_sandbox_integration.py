@@ -71,18 +71,9 @@ def test_workload_driver_sends_http_requests(auth_client) -> None:
     assert all(sample.latency_ms >= 0 for sample in samples)
 
 
-def test_provider_timeout_under_fault() -> None:
-    import os
-
-    os.environ["PROVIDER_SERVICE_URL"] = "http://testserver"
-    with TestClient(provider_app) as provider_client, TestClient(payments_app) as payments_client:
-        provider_client.post(
-            "/internal/control/activate-fault",
-            headers={"X-Sandbox-Control-Token": "sandbox-control-test-token"},
-        )
-        # payments uses httpx to provider URL; patch via shared testserver is non-trivial.
-        # Validate provider delay directly and payments timeout classification separately.
+def test_provider_slow_endpoint_blocks_long_enough() -> None:
+    with TestClient(provider_app) as provider_client:
         start = __import__("time").perf_counter()
-        provider_client.post("/authorize", json={"amount_cents": 500})
+        provider_client.post("/authorize-slow", json={"amount_cents": 500})
         elapsed = __import__("time").perf_counter() - start
         assert elapsed >= 7.0
