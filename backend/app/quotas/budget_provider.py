@@ -63,6 +63,16 @@ class BudgetGuardedModelProvider:
                 )
             except QuotaExceeded as exc:
                 raise AICapacityUnavailable(exc.reason) from exc
+            try:
+                return self._inner.generate_structured(
+                    system_prompt,
+                    user_prompt,
+                    response_model,
+                )
+            except Exception:
+                if self._incident_id is not None:
+                    self._quota_guard.reconcile_failed_incident_call(self._incident_id)
+                raise
         return self._inner.generate_structured(
             system_prompt,
             user_prompt,

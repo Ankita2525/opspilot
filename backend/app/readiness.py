@@ -2,25 +2,18 @@ from __future__ import annotations
 
 import urllib.request
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from backend.app.config import OpsPilotSettings
-from backend.app.sandbox.hardening import SandboxHardening
 from backend.app.telemetry.models import TelemetryMode
 
 if TYPE_CHECKING:
     from backend.app.runtime import RuntimeResources
-
-
-@dataclass(frozen=True)
-class DependencyStatus:
-    name: str
-    status: str
+    from backend.app.sandbox.hardening import SandboxHardening
 
 
 @dataclass(frozen=True)
 class ReadinessReport:
-    ready: bool
+    status: Literal["ready", "degraded", "unready"]
     database: str
     model_provider: str
     lease_subsystem: str
@@ -28,11 +21,11 @@ class ReadinessReport:
     prometheus: str
     loki: str
     ai_capacity: str
+    sandbox_operational: str
 
     def to_response(self) -> dict[str, str]:
-        overall = "ready" if self.ready else "not_ready"
         return {
-            "status": overall,
+            "status": self.status,
             "database": self.database,
             "model_provider": self.model_provider,
             "lease_subsystem": self.lease_subsystem,
@@ -40,6 +33,7 @@ class ReadinessReport:
             "prometheus": self.prometheus,
             "loki": self.loki,
             "ai_capacity": self.ai_capacity,
+            "sandbox_operational": self.sandbox_operational,
         }
 
 
@@ -55,8 +49,22 @@ def assess_readiness(
     prometheus = "not_required"
     loki = "not_required"
     ai_capacity = "available"
+    sandbox_operational = "available"
 
-    if settings is not None and settings.telemetry_mode is TelemetryMode.LIVE:
+    if hardening is not None:
+        try:
+            if hardening.lease_store.is_quarantined():
+                sandbox_operational = "quarantined"
+            else:
+                hardening.lease_store.inspect()
+            lease_subsystem = "ready"
+        except Exception:
+            lease_subsystem = "unavailable"
+
+    live_mode = (
+        settings is not None and settings.telemetry_mode is TelemetryMode.LIVE
+    )
+    if live_mode and settings is not None:
         live_sandbox = _check_url(
             settings.prometheus_url.replace("prometheus", "checkout-api").replace(
                 ":9090", ":8081"
@@ -74,19 +82,18 @@ def assess_readiness(
         if hardening is not None and hardening.quota_guard.is_global_budget_exhausted():
             ai_capacity = "exhausted"
 
-    if hardening is not None:
-        try:
-            hardening.lease_store.inspect()
-            lease_subsystem = "ready"
-        except Exception:
-            lease_subsystem = "unavailable"
-
-    ready = database in {"ready", "in_memory"} and lease_subsystem == "ready"
-    if settings is not None and settings.telemetry_mode is TelemetryMode.LIVE:
-        ready = ready and prometheus in {"ready", "degraded"}
+    status = _overall_status(
+        database=database,
+        lease_subsystem=lease_subsystem,
+        sandbox_operational=sandbox_operational,
+        live_mode=live_mode,
+        prometheus=prometheus,
+        loki=loki,
+        ai_capacity=ai_capacity,
+    )
 
     return ReadinessReport(
-        ready=ready,
+        status=status,
         database=database,
         model_provider=model_provider,
         lease_subsystem=lease_subsystem,
@@ -94,7 +101,35 @@ def assess_readiness(
         prometheus=prometheus,
         loki=loki,
         ai_capacity=ai_capacity,
+        sandbox_operational=sandbox_operational,
     )
+
+
+def _overall_status(
+    *,
+    database: str,
+    lease_subsystem: str,
+    sandbox_operational: str,
+    live_mode: bool,
+    prometheus: str,
+    loki: str,
+    ai_capacity: str,
+) -> Literal["ready", "degraded", "unready"]:
+    if database not in {"ready", "in_memory"}:
+        return "unready"
+    if lease_subsystem != "ready":
+        return "unready"
+    if sandbox_operational == "quarantined":
+        return "unready"
+    if live_mode and prometheus == "unavailable":
+        return "unready"
+    if live_mode and prometheus == "degraded":
+        return "degraded"
+    if loki == "unavailable":
+        return "degraded"
+    if ai_capacity == "exhausted":
+        return "degraded"
+    return "ready"
 
 
 def _check_url(base_url: str | None, path: str = "") -> str:

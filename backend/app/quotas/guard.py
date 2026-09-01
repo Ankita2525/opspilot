@@ -172,3 +172,13 @@ class QuotaGuard:
     def reset_incident_calls(self, incident_id: str) -> None:
         with self._lock:
             self._incident_model_calls.pop(incident_id, None)
+
+    def reconcile_failed_incident_call(self, incident_id: str) -> None:
+        """Release a per-incident reservation when provider inference fails.
+
+        Global and per-session daily counters remain consumed (safety over quota).
+        """
+        with self._lock:
+            current = self._incident_model_calls.get(incident_id, 0)
+            if current > 0:
+                self._incident_model_calls[incident_id] = current - 1

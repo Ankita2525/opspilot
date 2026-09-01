@@ -18,7 +18,7 @@ class HealthResponse(BaseModel):
 class ReadyResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    status: Literal["ready", "not_ready"]
+    status: Literal["ready", "degraded", "unready"]
     database: str
     model_provider: str
     lease_subsystem: str = "not_configured"
@@ -26,6 +26,7 @@ class ReadyResponse(BaseModel):
     prometheus: str = "not_required"
     loki: str = "not_required"
     ai_capacity: str = "available"
+    sandbox_operational: str = "available"
 
 
 class ScenarioSummary(BaseModel):
