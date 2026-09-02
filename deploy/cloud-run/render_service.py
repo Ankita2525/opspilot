@@ -10,6 +10,7 @@ from pathlib import Path
 
 CLOUD_RUN_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = CLOUD_RUN_DIR / "service.yaml.tmpl"
+OTEL_COLLECTOR_CONFIG_PATH = CLOUD_RUN_DIR / "otel-collector.yaml"
 DEFAULT_OUTPUT_DIR = CLOUD_RUN_DIR / "rendered"
 
 REQUIRED_PLACEHOLDERS = (
@@ -21,6 +22,15 @@ REQUIRED_PLACEHOLDERS = (
     "OPSPILOT_LOKI_URL",
     "GRAFANA_CLOUD_LOKI_ENDPOINT",
     "OPSPILOT_PUBLIC_DOMAIN",
+)
+
+REQUIRED_SECRET_MANAGER_SECRETS = (
+    "opspilot-database-url",
+    "opspilot-groq-api-key",
+    "opspilot-sandbox-control-token",
+    "opspilot-turnstile-secret",
+    "opspilot-grafana-loki-authorization",
+    "opspilot-prometheus-config",
 )
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
@@ -37,6 +47,22 @@ def load_vars_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
     return values
+
+
+def build_otel_collector_config(grafana_loki_endpoint: str) -> str:
+    text = OTEL_COLLECTOR_CONFIG_PATH.read_text()
+    return text.replace("${GRAFANA_CLOUD_LOKI_ENDPOINT}", grafana_loki_endpoint)
+
+
+def indent_yaml_block(text: str, spaces: int) -> str:
+    pad = " " * spaces
+    lines = []
+    for line in text.splitlines():
+        if line.strip():
+            lines.append(f"{pad}{line}")
+        else:
+            lines.append("")
+    return "\n".join(lines)
 
 
 def render_service(
@@ -69,6 +95,9 @@ def render_service(
             + ", ".join(missing)
             + ". Supply via --vars-file or CLI flags."
         )
+
+    otel_config = build_otel_collector_config(values["GRAFANA_CLOUD_LOKI_ENDPOINT"])
+    values["OTEL_COLLECTOR_CONFIG_BLOCK"] = indent_yaml_block(otel_config, 16)
 
     rendered = template_path.read_text()
     for key, value in values.items():

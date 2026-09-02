@@ -14,6 +14,7 @@ metadata:
     opspilot.deployment_profile: ephemeral_live_lab
   annotations:
     run.googleapis.com/container-dependencies: '{"opspilot":["checkout-api","auth-service","payments-service","provider-service","prometheus","otel-collector"]}'
+    run.googleapis.com/invoker-iam-disabled: "true"
 spec:
   template:
     metadata:
@@ -26,10 +27,8 @@ spec:
           opspilot-groq-api-key:projects/{{PROJECT_ID}}/secrets/opspilot-groq-api-key,
           opspilot-sandbox-control-token:projects/{{PROJECT_ID}}/secrets/opspilot-sandbox-control-token,
           opspilot-turnstile-secret:projects/{{PROJECT_ID}}/secrets/opspilot-turnstile-secret,
-          opspilot-grafana-loki-username:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-username,
-          opspilot-grafana-loki-api-key:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-api-key,
-          opspilot-prometheus-config:projects/{{PROJECT_ID}}/secrets/opspilot-prometheus-config,
-          opspilot-otel-collector-config:projects/{{PROJECT_ID}}/secrets/opspilot-otel-collector-config
+          opspilot-grafana-loki-authorization:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-authorization,
+          opspilot-prometheus-config:projects/{{PROJECT_ID}}/secrets/opspilot-prometheus-config
     spec:
       serviceAccountName: opspilot-cloud-run@{{PROJECT_ID}}.iam.gserviceaccount.com
       # Deliberate concurrency: global Postgres lease serializes live mutations;
@@ -62,15 +61,10 @@ spec:
               value: http://127.0.0.1:9090
             - name: OPSPILOT_LOKI_URL
               value: "{{OPSPILOT_LOKI_URL}}"
-            - name: OPSPILOT_LOKI_USERNAME
+            - name: OPSPILOT_LOKI_AUTHORIZATION
               valueFrom:
                 secretKeyRef:
-                  name: opspilot-grafana-loki-username
-                  key: latest
-            - name: OPSPILOT_LOKI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: opspilot-grafana-loki-api-key
+                  name: opspilot-grafana-loki-authorization
                   key: latest
             - name: CHECKOUT_API_URL
               value: http://127.0.0.1:8081
@@ -257,29 +251,20 @@ spec:
 
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.120.0
-          args: ["--config=/etc/otel-collector-config.yaml"]
+          args: ["--config=env:OTEL_COLLECTOR_CONFIG"]
           resources:
             limits:
               cpu: "1"
               memory: 256Mi
           env:
-            - name: GRAFANA_CLOUD_LOKI_ENDPOINT
-              value: "{{GRAFANA_CLOUD_LOKI_ENDPOINT}}"
-            - name: GRAFANA_CLOUD_LOKI_USERNAME
+            - name: OTEL_COLLECTOR_CONFIG
+              value: |
+{{OTEL_COLLECTOR_CONFIG_BLOCK}}
+            - name: OPSPILOT_LOKI_AUTHORIZATION
               valueFrom:
                 secretKeyRef:
-                  name: opspilot-grafana-loki-username
+                  name: opspilot-grafana-loki-authorization
                   key: latest
-            - name: GRAFANA_CLOUD_LOKI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: opspilot-grafana-loki-api-key
-                  key: latest
-          volumeMounts:
-            - name: otel-config
-              mountPath: /etc/otel-collector-config.yaml
-              subPath: otel-collector-config.yaml
-              readOnly: true
 
       volumes:
         - name: prometheus-config
@@ -288,9 +273,3 @@ spec:
             items:
               - key: latest
                 path: prometheus.yml
-        - name: otel-config
-          secret:
-            secretName: opspilot-otel-collector-config
-            items:
-              - key: latest
-                path: otel-collector-config.yaml

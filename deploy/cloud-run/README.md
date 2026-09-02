@@ -11,6 +11,7 @@ This deployment profile is **separate** from the [full production architecture](
 - Real HTTP faults, real telemetry, no simulator fallback in live mode
 - Neon PostgreSQL for durable lease / incident / provenance state
 - Grafana Cloud Loki for logs (OTEL collector sidecar)
+- **Six** Secret Manager active versions (within free allowance)
 
 ## Container topology
 
@@ -47,15 +48,39 @@ Deploy externally:
 gcloud run services replace deploy/cloud-run/rendered/service.yaml --region=us-central1
 ```
 
-## Runtime service account
+## Public access
 
-The rendered manifest sets:
+The rendered manifest sets `run.googleapis.com/invoker-iam-disabled: "true"` on the
+service. This is Google's recommended mechanism for unauthenticated portfolio access
+without granting `allUsers` the Cloud Run Invoker role.
 
-`opspilot-cloud-run@<PROJECT_ID>.iam.gserviceaccount.com`
+The runtime service account is **not** granted Cloud Run Invoker. It is the application
+identity only.
 
-Grant IAM roles to this account externally (Secret Manager accessor, Artifact Registry reader, etc.).
+## Runtime service account IAM (external)
 
-## Secret Manager (minimum set)
+`opspilot-cloud-run@<PROJECT_ID>.iam.gserviceaccount.com` needs:
+
+| Grant | Scope |
+|-------|-------|
+| `roles/secretmanager.secretAccessor` | **Only** the six secrets below (secret-level IAM, not project-wide) |
+| `roles/artifactregistry.reader` | `opspilot` Artifact Registry repository only, if required for custom image pull by this identity |
+
+Do **not** grant `roles/run.invoker` to the runtime service account.
+
+## Deployer IAM (external)
+
+`post2ankitak@gmail.com` (or CI deploy principal):
+
+| Grant | Scope |
+|-------|-------|
+| `roles/iam.serviceAccountUser` | On `opspilot-cloud-run@...` only |
+| Project owner / Cloud Run Admin | Existing deployment permissions are sufficient |
+
+Do not add redundant broad Secret Manager accessor roles on the deployer if secret
+creation and IAM binding are done explicitly.
+
+## Secret Manager (exactly six active versions)
 
 | Secret | Containers |
 |--------|------------|
@@ -63,24 +88,26 @@ Grant IAM roles to this account externally (Secret Manager accessor, Artifact Re
 | `opspilot-groq-api-key` | `opspilot` |
 | `opspilot-sandbox-control-token` | `opspilot`, all sandbox sidecars |
 | `opspilot-turnstile-secret` | `opspilot` |
-| `opspilot-grafana-loki-username` | `opspilot` (`OPSPILOT_LOKI_USERNAME`), `otel-collector` |
-| `opspilot-grafana-loki-api-key` | `opspilot` (`OPSPILOT_LOKI_API_KEY`), `otel-collector` |
-| `opspilot-prometheus-config` | `prometheus` volume (file content from `prometheus.yml`) |
-| `opspilot-otel-collector-config` | `otel-collector` volume (file content from `otel-collector.yaml`) |
+| `opspilot-grafana-loki-authorization` | `opspilot` (`OPSPILOT_LOKI_AUTHORIZATION`), `otel-collector` |
+| `opspilot-prometheus-config` | `prometheus` volume (`prometheus.yml` content) |
 
-Checkout safely reuses `opspilot-database-url`: production already maps `CHECKOUT_DATABASE_URL=${DATABASE_URL}`; checkout only uses the `checkout_orders` table and does not collide with OpsPilot schema migrations.
+Create `opspilot-grafana-loki-authorization` with the **complete** HTTP Authorization
+header value Grafana Cloud expects, e.g. `Basic <base64(user_id:api_key)>`.
 
-Grafana Loki credentials are shared between the OTEL collector (push) and OpsPilot Loki query client (read) via the same username/API-key secrets with different env var names.
+Checkout safely reuses `opspilot-database-url`: production already maps
+`CHECKOUT_DATABASE_URL=${DATABASE_URL}`; checkout only uses the `checkout_orders` table.
 
-## Config file delivery (Prometheus + OTEL)
+## Config delivery
 
-Cloud Run multi-container services do not support bind mounts or ConfigMaps. The only file-volume mechanism is **Secret Manager secret mounts**. `prometheus.yml` and `otel-collector.yaml` are non-secret configuration payloads stored as secrets for operational delivery only.
+| Component | Delivery |
+|-----------|----------|
+| **Prometheus** | Secret Manager volume mount (`opspilot-prometheus-config`) — Prometheus requires a file |
+| **OTEL collector** | Non-secret YAML embedded in `OTEL_COLLECTOR_CONFIG` env var; loaded via `--config=env:OTEL_COLLECTOR_CONFIG`. Grafana auth substituted at runtime via `${OPSPILOT_LOKI_AUTHORIZATION}` |
 
-Create secrets externally:
+Create the Prometheus config secret externally:
 
 ```bash
 gcloud secrets create opspilot-prometheus-config --data-file=deploy/cloud-run/prometheus.yml
-gcloud secrets create opspilot-otel-collector-config --data-file=deploy/cloud-run/otel-collector.yaml
 ```
 
 ## Concurrency
@@ -90,20 +117,6 @@ gcloud secrets create opspilot-otel-collector-config --data-file=deploy/cloud-ru
 - `max-instances: 1` caps the deployment to a single instance
 - **Global Postgres lease** serializes live incident mutations (only one fault/rollback at a time)
 - Concurrent **read-only** traffic (`/ready`, `/api/sandbox/status`, provenance GET) can proceed during SSE Request A
-- Request A (SSE) ends at `approval_required` before Request B (approval) begins — no overlap on the remediation path
-
-## Outbound networking
-
-All containers in a Cloud Run multi-container instance share the **same network namespace**. Outbound Internet from any container reaches external dependencies:
-
-| Dependency | Used by |
-|------------|---------|
-| Neon PostgreSQL | OpsPilot (incidents, lease, provenance, checkpoints), checkout-api (connection pool) |
-| Groq API | OpsPilot (hypothesis generation in live mode) |
-| Cloudflare Turnstile | OpsPilot (public abuse guard when enabled) |
-| Grafana Cloud Loki | OTEL collector (log export); OpsPilot queries Loki HTTP API |
-
-Sandbox sidecars (auth, payments, provider) do not require direct Neon access except checkout-api.
 
 ## Local validation (no GCP)
 
@@ -113,15 +126,6 @@ curl -fsS http://localhost:8000/ready
 python scripts/validate_cloud_run_local.py
 ```
 
-## Honest limitations
-
-- Three controlled incident classes (checkout, auth, payments)
-- One remediation action (`rollback_deployment`)
-- Shared public sandbox (global lease)
-- Scale-to-zero cold start (~30–90s)
-- Ephemeral Prometheus history between instances (recovery re-collects fresh telemetry)
-- Reference evaluation mode remains separate (`OPSPILOT_TELEMETRY_MODE=reference`)
-
 ## Files
 
 | File | Purpose |
@@ -129,8 +133,8 @@ python scripts/validate_cloud_run_local.py
 | `service.yaml.tmpl` | Cloud Run multi-container template |
 | `render_service.py` | Substitute project/region/tag + deploy-time vars |
 | `render.vars.example` | Non-secret deploy-time values |
-| `prometheus.yml` | Localhost scrape targets |
-| `otel-collector.yaml` | OTLP → Grafana Cloud Loki |
+| `prometheus.yml` | Localhost scrape targets (uploaded to Secret Manager) |
+| `otel-collector.yaml` | Source for embedded OTEL config (not stored in Secret Manager) |
 | `env.example` | Full environment reference |
 
 Do **not** deploy from this repository without creating secrets and rendering the manifest.

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import shutil
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD_RUN_DIR = ROOT / "deploy" / "cloud-run"
-TEMPLATE_PATH = CLOUD_RUN_DIR / "service.yaml.tmpl"
 RENDER_VARS_EXAMPLE = CLOUD_RUN_DIR / "render.vars.example"
+OTEL_IMAGE = "otel/opentelemetry-collector-contrib:0.120.0"
 
 SENSITIVE_ENV_NAMES = frozenset(
     {
@@ -21,17 +24,21 @@ SENSITIVE_ENV_NAMES = frozenset(
         "GROQ_API_KEY",
         "SANDBOX_CONTROL_TOKEN",
         "OPSPILOT_TURNSTILE_SECRET_KEY",
-        "OPSPILOT_LOKI_USERNAME",
-        "OPSPILOT_LOKI_API_KEY",
-        "GRAFANA_CLOUD_LOKI_USERNAME",
-        "GRAFANA_CLOUD_LOKI_API_KEY",
+        "OPSPILOT_LOKI_AUTHORIZATION",
     }
+)
+
+REMOVED_SECRET_NAMES = (
+    "opspilot-grafana-loki-username",
+    "opspilot-grafana-loki-api-key",
+    "opspilot-otel-collector-config",
 )
 
 PLAINTEXT_SECRET_PATTERNS = (
     re.compile(r"postgresql://"),
     re.compile(r"sk-[A-Za-z0-9]{10,}"),
     re.compile(r"replace-with", re.IGNORECASE),
+    re.compile(r"Authorization:\s*Basic\s+[A-Za-z0-9+/=]{8,}"),
 )
 
 
@@ -97,6 +104,17 @@ def test_rendered_manifest_has_no_plaintext_secrets() -> None:
         assert not pattern.search(text)
 
 
+def test_exactly_six_secret_manager_versions_required() -> None:
+    render = _load_render_module()
+    assert len(render.REQUIRED_SECRET_MANAGER_SECRETS) == 6
+    annotations = _rendered_spec()["spec"]["template"]["metadata"]["annotations"]
+    secrets_annotation = annotations["run.googleapis.com/secrets"]
+    for secret_name in render.REQUIRED_SECRET_MANAGER_SECRETS:
+        assert secret_name in secrets_annotation
+    for removed in REMOVED_SECRET_NAMES:
+        assert removed not in secrets_annotation
+
+
 def test_sensitive_env_uses_secret_key_ref() -> None:
     spec = _rendered_spec()
     containers = spec["spec"]["template"]["spec"]["containers"]
@@ -108,6 +126,20 @@ def test_sensitive_env_uses_secret_key_ref() -> None:
             ref = env[name]
             assert isinstance(ref, dict), f"{container['name']} {name} must use secretKeyRef"
             assert "secretKeyRef" in ref
+
+
+def test_no_separate_grafana_username_or_api_key_env() -> None:
+    spec = _rendered_spec()
+    containers = spec["spec"]["template"]["spec"]["containers"]
+    forbidden = {
+        "OPSPILOT_LOKI_USERNAME",
+        "OPSPILOT_LOKI_API_KEY",
+        "GRAFANA_CLOUD_LOKI_USERNAME",
+        "GRAFANA_CLOUD_LOKI_API_KEY",
+    }
+    for container in containers:
+        env = _container_env(container)
+        assert forbidden.isdisjoint(env.keys())
 
 
 def test_backend_has_required_configuration() -> None:
@@ -133,10 +165,16 @@ def test_backend_has_required_configuration() -> None:
         "GROQ_API_KEY",
         "SANDBOX_CONTROL_TOKEN",
         "OPSPILOT_TURNSTILE_SECRET_KEY",
-        "OPSPILOT_LOKI_USERNAME",
-        "OPSPILOT_LOKI_API_KEY",
+        "OPSPILOT_LOKI_AUTHORIZATION",
     ):
         assert secret_name in env
+        assert env[secret_name]["secretKeyRef"]["name"] == {
+            "DATABASE_URL": "opspilot-database-url",
+            "GROQ_API_KEY": "opspilot-groq-api-key",
+            "SANDBOX_CONTROL_TOKEN": "opspilot-sandbox-control-token",
+            "OPSPILOT_TURNSTILE_SECRET_KEY": "opspilot-turnstile-secret",
+            "OPSPILOT_LOKI_AUTHORIZATION": "opspilot-grafana-loki-authorization",
+        }[secret_name]
 
 
 def test_sandbox_services_receive_control_token() -> None:
@@ -161,51 +199,112 @@ def test_cloud_run_service_account_configured() -> None:
     assert sa == "opspilot-cloud-run@opspilot-live-lab.iam.gserviceaccount.com"
 
 
-def test_secret_annotations_list_all_secrets() -> None:
-    annotations = _rendered_spec()["spec"]["template"]["metadata"]["annotations"]
-    secrets = annotations["run.googleapis.com/secrets"]
-    for name in (
-        "opspilot-database-url",
-        "opspilot-groq-api-key",
-        "opspilot-sandbox-control-token",
-        "opspilot-turnstile-secret",
-        "opspilot-grafana-loki-username",
-        "opspilot-grafana-loki-api-key",
-        "opspilot-prometheus-config",
-        "opspilot-otel-collector-config",
-    ):
-        assert name in secrets
-        assert "projects/opspilot-live-lab/secrets/" in secrets
+def test_public_access_invoker_iam_disabled() -> None:
+    annotations = _rendered_spec()["metadata"]["annotations"]
+    assert annotations["run.googleapis.com/invoker-iam-disabled"] == "true"
 
 
-def test_otel_collector_grafana_env_wired() -> None:
+def test_otel_collector_uses_env_config_provider() -> None:
     containers = _rendered_spec()["spec"]["template"]["spec"]["containers"]
     otel = next(c for c in containers if c["name"] == "otel-collector")
+    assert otel["args"] == ["--config=env:OTEL_COLLECTOR_CONFIG"]
     env = _container_env(otel)
-    assert "GRAFANA_CLOUD_LOKI_ENDPOINT" in env
-    for name in ("GRAFANA_CLOUD_LOKI_USERNAME", "GRAFANA_CLOUD_LOKI_API_KEY"):
-        assert "secretKeyRef" in env[name]
+    assert "OTEL_COLLECTOR_CONFIG" in env
+    config_text = str(env["OTEL_COLLECTOR_CONFIG"])
+    assert "receivers:" in config_text
+    assert "Authorization: ${OPSPILOT_LOKI_AUTHORIZATION}" in config_text
+    assert "opspilot-grafana-loki-authorization" in yaml.dump(env["OPSPILOT_LOKI_AUTHORIZATION"])
 
 
-def test_prometheus_and_otel_config_volume_mounts() -> None:
+def test_otel_collector_has_no_secret_manager_config_volume() -> None:
+    spec = _rendered_spec()["spec"]["template"]["spec"]
+    volumes = spec.get("volumes", [])
+    assert len(volumes) == 1
+    assert volumes[0]["name"] == "prometheus-config"
+    otel = next(c for c in spec["containers"] if c["name"] == "otel-collector")
+    assert "volumeMounts" not in otel
+
+
+def test_prometheus_config_volume_mount() -> None:
     spec = _rendered_spec()["spec"]["template"]["spec"]
     volumes = {item["name"]: item for item in spec["volumes"]}
     assert volumes["prometheus-config"]["secret"]["secretName"] == "opspilot-prometheus-config"
-    assert volumes["otel-config"]["secret"]["secretName"] == "opspilot-otel-collector-config"
     prometheus = next(c for c in spec["containers"] if c["name"] == "prometheus")
-    otel = next(c for c in spec["containers"] if c["name"] == "otel-collector")
     assert prometheus["volumeMounts"][0]["mountPath"] == "/etc/prometheus"
-    assert otel["volumeMounts"][0]["subPath"] == "otel-collector-config.yaml"
 
 
-def test_loki_config_from_environ_supports_grafana_auth() -> None:
+def test_loki_config_from_environ_supports_authorization_header() -> None:
     from backend.app.telemetry.clients import loki_config_from_environ
 
     config = loki_config_from_environ(
         {
             "OPSPILOT_LOKI_URL": "https://logs.example.net",
-            "OPSPILOT_LOKI_USERNAME": "12345",
-            "OPSPILOT_LOKI_API_KEY": "glc_test_key",
+            "OPSPILOT_LOKI_AUTHORIZATION": "Basic ZmFrZTpwYXNz",
         }
     )
-    assert config._http_auth == ("12345", "glc_test_key")
+    assert config.request_headers() == {"Authorization": "Basic ZmFrZTpwYXNz"}
+
+
+def test_loki_client_sends_authorization_header() -> None:
+    from backend.app.telemetry.clients import LokiClient, LokiConfig
+
+    config = LokiConfig(
+        base_url="https://logs.example.net",
+        authorization="Basic ZmFrZTpwYXNz",
+    )
+    client = LokiClient(config)
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"version": "2.9.0"}
+
+    captured: dict[str, object] = {}
+
+    def fake_get(url: str, **kwargs: object) -> MagicMock:
+        captured["headers"] = kwargs.get("headers")
+        return mock_response
+
+    with patch("backend.app.telemetry.clients.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.get = fake_get
+        mock_client_cls.return_value = mock_client
+        assert client.is_api_ready()
+
+    assert captured["headers"] == {"Authorization": "Basic ZmFrZTpwYXNz"}
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker required")
+def test_otel_collector_validates_env_config_locally() -> None:
+    render = _load_render_module()
+    config = render.build_otel_collector_config(
+        "https://logs.example.net/loki/api/v1/push"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-e",
+                f"OTEL_COLLECTOR_CONFIG={config}",
+                "-e",
+                "OPSPILOT_LOKI_AUTHORIZATION=Basic ZmFrZTpwYXNz",
+                OTEL_IMAGE,
+                "--config=env:OTEL_COLLECTOR_CONFIG",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
+        assert "Everything is ready" in combined
+        assert "invalid configuration" not in combined.lower()
+        return
+
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "cannot unmarshal" not in combined.lower()
+    assert "invalid configuration" not in combined.lower()
+    assert "error reading configuration" not in combined.lower()
