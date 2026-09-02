@@ -67,3 +67,17 @@ class EvaluationRecord(BaseModel):
     unsafe_action_attempted: bool
     investigation_steps: int
     created_at: datetime
+
+
+class ProvenanceRecord(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    incident_id: str
+    manifest: dict[str, JsonValue]
+    evidence_manifest_hash: str
+    updated_at: datetime
+
+    @field_validator("manifest")
+    @classmethod
+    def _copy_manifest(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        return dict(value)

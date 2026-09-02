@@ -4,6 +4,7 @@ from backend.app.api.schemas import (
     BaselineScenarioEvaluation,
     IncidentApprovalSummary,
     IncidentAuditResponse,
+    IncidentProvenanceResponse,
     IncidentSummaryResponse,
 )
 from backend.app.evals.models import EvaluationSuiteResult, IncidentEvaluationResult
@@ -13,6 +14,7 @@ from backend.app.persistence.models import (
     IncidentRecord,
     JsonValue,
 )
+from backend.app.provenance.models import LiveRunProvenance
 from backend.app.security.untrusted_text import (
     sanitize_public_instance,
     sanitize_public_text,
@@ -65,6 +67,14 @@ def public_incident_summary(
             approval=_public_approval_summary(approvals),
         )
     )
+
+
+def public_incident_provenance(
+    provenance: LiveRunProvenance,
+) -> IncidentProvenanceResponse:
+    payload = provenance.model_dump()
+    _assert_provenance_safe(payload)
+    return sanitize_public_instance(IncidentProvenanceResponse.model_validate(payload))
 
 
 def public_baseline_evaluation(
@@ -159,3 +169,19 @@ def _forbidden_metadata_key(key: str) -> bool:
     if normalized in {item.replace("-", "_") for item in FORBIDDEN_METADATA_KEYS}:
         return True
     return "prompt" in normalized or "traceback" in normalized
+
+
+def _assert_provenance_safe(payload: object) -> None:
+    forbidden_fragments = (
+        "known_root_cause",
+        "session_id",
+        "sandbox_control",
+        "groq_api",
+        "database_url",
+        "turnstile",
+        "neon",
+    )
+    serialized = str(payload).lower()
+    for fragment in forbidden_fragments:
+        if fragment in serialized:
+            raise ValueError(f"Provenance payload contains forbidden fragment: {fragment}")

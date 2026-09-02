@@ -5,6 +5,7 @@ from backend.app.persistence.models import (
     AuditRecord,
     EvaluationRecord,
     IncidentRecord,
+    ProvenanceRecord,
 )
 
 
@@ -31,3 +32,7 @@ class OpsPilotRepository(Protocol):
     def save_evaluation(self, record: EvaluationRecord) -> None: ...
 
     def list_evaluations(self, incident_id: str) -> list[EvaluationRecord]: ...
+
+    def save_provenance(self, record: ProvenanceRecord) -> None: ...
+
+    def get_provenance(self, incident_id: str) -> ProvenanceRecord | None: ...

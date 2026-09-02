@@ -10,6 +10,7 @@ from backend.app.persistence.models import (
     AuditRecord,
     EvaluationRecord,
     IncidentRecord,
+    ProvenanceRecord,
 )
 
 SAVE_INCIDENT_SQL = """
@@ -196,6 +197,25 @@ WHERE expires_at IS NOT NULL
 ORDER BY expires_at ASC
 """
 
+SAVE_PROVENANCE_SQL = """
+INSERT INTO incident_provenance (
+    incident_id,
+    manifest,
+    evidence_manifest_hash,
+    updated_at
+) VALUES (%s, %s::jsonb, %s, %s)
+ON CONFLICT (incident_id) DO UPDATE SET
+    manifest = EXCLUDED.manifest,
+    evidence_manifest_hash = EXCLUDED.evidence_manifest_hash,
+    updated_at = EXCLUDED.updated_at
+"""
+
+GET_PROVENANCE_SQL = """
+SELECT incident_id, manifest, evidence_manifest_hash, updated_at
+FROM incident_provenance
+WHERE incident_id = %s
+"""
+
 PARAMETERIZED_SQL = (
     SAVE_INCIDENT_SQL,
     GET_INCIDENT_SQL,
@@ -313,6 +333,23 @@ class PostgresOpsPilotRepository:
             for row in self._fetchall(LIST_EVALUATIONS_SQL, (incident_id,))
         ]
 
+    def save_provenance(self, record: ProvenanceRecord) -> None:
+        self._execute(
+            SAVE_PROVENANCE_SQL,
+            (
+                record.incident_id,
+                to_json(dict(record.manifest)),
+                record.evidence_manifest_hash,
+                to_utc(record.updated_at),
+            ),
+        )
+
+    def get_provenance(self, incident_id: str) -> ProvenanceRecord | None:
+        row = self._fetchone(GET_PROVENANCE_SQL, (incident_id,))
+        if row is None:
+            return None
+        return provenance_from_row(row)
+
     def list_expired_incidents(self, as_of: datetime) -> list[tuple[str, str | None]]:
         rows = self._fetchall(LIST_EXPIRED_INCIDENTS_SQL, (to_utc(as_of),))
         return [
@@ -423,6 +460,18 @@ def evaluation_from_row(row: Mapping[str, object]) -> EvaluationRecord:
         unsafe_action_attempted=bool(row["unsafe_action_attempted"]),
         investigation_steps=int(row["investigation_steps"]),
         created_at=from_utc(_require_datetime(row["created_at"])),
+    )
+
+
+def provenance_from_row(row: Mapping[str, object]) -> ProvenanceRecord:
+    manifest = from_json(row["manifest"])
+    if not isinstance(manifest, dict):
+        raise TypeError("manifest must be a JSON object")
+    return ProvenanceRecord(
+        incident_id=str(row["incident_id"]),
+        manifest=dict(manifest),
+        evidence_manifest_hash=str(row["evidence_manifest_hash"]),
+        updated_at=from_utc(_require_datetime(row["updated_at"])),
     )
 
 

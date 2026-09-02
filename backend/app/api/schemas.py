@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.agent.hypotheses import HypothesisResult
 from backend.app.persistence.models import JsonValue
+from backend.app.provenance.models import LiveRunProvenance
 from backend.app.tools.schemas import MetricResponse
 
 
@@ -120,6 +121,10 @@ class IncidentSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     approval: IncidentApprovalSummary | None
+
+
+class IncidentProvenanceResponse(LiveRunProvenance):
+    """Public read-only provenance for a live incident run."""
 
 
 class BaselineScenarioEvaluation(BaseModel):
