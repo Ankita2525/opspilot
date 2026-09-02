@@ -24,7 +24,29 @@ This deployment profile is **separate** from the [full production architecture](
 | `prometheus` | Sidecar (ephemeral TSDB) | `127.0.0.1:9090` |
 | `otel-collector` | Sidecar | `127.0.0.1:4318` |
 
-## Request lifecycle
+## Concurrency
+
+`containerConcurrency: 10` (deliberate, not Cloud Run default 80):
+
+- `max-instances: 1` caps the deployment to a single instance
+- **Global Postgres lease** serializes live incident mutations (only one fault/rollback at a time)
+- Concurrent **read-only** traffic (`/ready`, `/api/sandbox/status`, provenance GET) can proceed during SSE Request A
+- Request A (SSE) ends at `approval_required` before Request B (approval) begins — no overlap on the remediation path
+
+## Outbound networking
+
+All containers in a Cloud Run multi-container instance share the **same network namespace**. Outbound Internet from any container reaches external dependencies:
+
+| Dependency | Used by |
+|------------|---------|
+| Neon PostgreSQL | OpsPilot (incidents, lease, provenance, checkpoints), checkout-api (connection pool) |
+| Groq API | OpsPilot (hypothesis generation in live mode) |
+| Cloudflare Turnstile | OpsPilot (public abuse guard when enabled) |
+| Grafana Cloud Loki | OTEL collector (log export); OpsPilot queries Loki HTTP API |
+
+Sandbox sidecars (auth, payments, provider) do not require direct Neon access except checkout-api.
+
+## Container startup
 
 **Request A** (investigation stream):
 

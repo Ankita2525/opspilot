@@ -67,7 +67,40 @@ def test_no_simulator_fallback_in_cloud_run_env() -> None:
 
 def test_container_concurrency_bounded() -> None:
     spec = _service_spec()["spec"]["template"]["spec"]
-    assert spec["containerConcurrency"] == 1
+    assert spec["containerConcurrency"] == 10
+
+
+def test_container_count_within_cloud_run_limit() -> None:
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    assert len(containers) == 7
+    assert len(containers) <= 10
+
+
+def test_ingress_binds_all_interfaces_not_localhost() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    cmd_line = [line for line in dockerfile.splitlines() if line.startswith("CMD")][-1]
+    assert "0.0.0.0" in cmd_line
+    assert "${PORT:-8000}" in cmd_line
+    assert "127.0.0.1" not in cmd_line
+
+
+def test_opspilot_startup_probe_uses_ready_not_health_only() -> None:
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    opspilot = next(c for c in containers if c["name"] == "opspilot")
+    assert opspilot["startupProbe"]["httpGet"]["path"] == "/ready"
+
+
+def test_sidecar_startup_probes_configured() -> None:
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    for name in ("checkout-api", "auth-service", "payments-service", "provider-service", "prometheus"):
+        container = next(c for c in containers if c["name"] == name)
+        assert "startupProbe" in container
+
+
+def test_container_dependencies_annotation_present() -> None:
+    annotations = _service_spec()["metadata"]["annotations"]
+    assert "run.googleapis.com/container-dependencies" in annotations
+    assert "opspilot" in annotations["run.googleapis.com/container-dependencies"]
 
 
 def test_prometheus_listen_localhost_only() -> None:

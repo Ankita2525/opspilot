@@ -1,6 +1,6 @@
 # Cloud Run multi-container service — PUBLIC EPHEMERAL LIVE INCIDENT LAB
 #
-# Only the opspilot container receives public ingress (port 8000).
+# Only the opspilot container receives public ingress (PORT, default 8000 here).
 # Sidecars communicate over localhost inside the instance network namespace.
 #
 # Deploy with: gcloud run services replace deploy/cloud-run/service.yaml --region=...
@@ -12,6 +12,8 @@ metadata:
   name: opspilot-live-lab
   labels:
     opspilot.deployment_profile: ephemeral_live_lab
+  annotations:
+    run.googleapis.com/container-dependencies: '{"opspilot":["checkout-api","auth-service","payments-service","provider-service","prometheus","otel-collector"]}'
 spec:
   template:
     metadata:
@@ -20,7 +22,9 @@ spec:
         autoscaling.knative.dev/maxScale: "1"
         run.googleapis.com/cpu-throttling: "false"
     spec:
-      containerConcurrency: 1
+      # Deliberate concurrency: global Postgres lease serializes live mutations;
+      # allow concurrent read-only /ready, status, and provenance during SSE Request A.
+      containerConcurrency: 10
       timeoutSeconds: 3600
       containers:
         - name: opspilot
@@ -32,6 +36,8 @@ spec:
               cpu: "2"
               memory: 2Gi
           env:
+            - name: PORT
+              value: "8000"
             - name: OPSPILOT_ENV
               value: production
             - name: OPSPILOT_DEPLOYMENT_PROFILE
@@ -50,10 +56,10 @@ spec:
               value: http://127.0.0.1:8084
           startupProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8000
             periodSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 24
           livenessProbe:
             httpGet:
               path: /health
@@ -72,6 +78,13 @@ spec:
               value: checkout-api
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8081
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
 
         - name: auth-service
           image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
@@ -85,6 +98,13 @@ spec:
               value: auth-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8082
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
 
         - name: payments-service
           image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
@@ -100,6 +120,13 @@ spec:
               value: http://127.0.0.1:8084
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8083
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
 
         - name: provider-service
           image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
@@ -113,6 +140,13 @@ spec:
               value: provider-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8084
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
 
         - name: prometheus
           image: prom/prometheus:v3.2.1
@@ -128,6 +162,13 @@ spec:
             - name: prometheus-config
               mountPath: /etc/prometheus
               readOnly: true
+          startupProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
 
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.120.0
