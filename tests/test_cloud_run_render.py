@@ -117,6 +117,26 @@ def test_exactly_six_secret_manager_versions_required() -> None:
         assert removed not in secrets_annotation
 
 
+def test_secrets_annotation_matches_cloud_run_grammar() -> None:
+    render = _load_render_module()
+    annotations = _rendered_spec()["spec"]["template"]["metadata"]["annotations"]
+    secrets_annotation = annotations["run.googleapis.com/secrets"]
+
+    assert ", " not in secrets_annotation
+    assert re.fullmatch(
+        r"([a-z0-9-]+:projects/[a-z0-9-]+/secrets/[a-z0-9-]+"
+        r")(,[a-z0-9-]+:projects/[a-z0-9-]+/secrets/[a-z0-9-]+)*",
+        secrets_annotation,
+    ), secrets_annotation
+
+    entries = secrets_annotation.split(",")
+    assert len(entries) == 6
+    for entry in entries:
+        alias, _, mapping = entry.partition(":")
+        assert mapping == f"projects/opspilot-live-lab/secrets/{alias}"
+        assert alias in render.REQUIRED_SECRET_MANAGER_SECRETS
+
+
 def test_sensitive_env_uses_secret_key_ref() -> None:
     spec = _rendered_spec()
     containers = spec["spec"]["template"]["spec"]["containers"]
