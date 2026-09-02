@@ -7,7 +7,12 @@ from typing import Any
 
 from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.events.models import LiveIncidentEventType
-from backend.app.telemetry.clients import LokiClient, LokiConfig, PrometheusClient, PrometheusConfig
+from backend.app.telemetry.clients import (
+    LokiClient,
+    PrometheusClient,
+    PrometheusConfig,
+    loki_config_from_environ,
+)
 from backend.app.telemetry.evidence import EvidenceReadiness, assess_readiness
 from backend.app.telemetry.live import LiveTelemetryBackend
 from backend.app.telemetry.pipeline_health import (
@@ -76,14 +81,7 @@ class LiveIncidentOrchestrator:
                 )
             )
         )
-        loki = LokiClient(
-            LokiConfig(
-                base_url=os.environ.get(
-                    "OPSPILOT_LOKI_URL",
-                    "http://localhost:3100",
-                )
-            )
-        )
+        loki = LokiClient(loki_config_from_environ())
         telemetry = LiveTelemetryBackend(
             service=mapping.affected_service,
             prometheus=prometheus,

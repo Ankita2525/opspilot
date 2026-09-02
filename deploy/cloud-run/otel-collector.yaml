@@ -1,4 +1,5 @@
 # OTEL collector for Cloud Run multi-container (localhost sandbox exporters).
+# Loaded via --config=env:OTEL_COLLECTOR_CONFIG at runtime.
 receivers:
   otlp:
     protocols:
@@ -13,17 +14,10 @@ processors:
 exporters:
   loki:
     endpoint: ${GRAFANA_CLOUD_LOKI_ENDPOINT}
-    auth:
-      authenticator: basicauth/loki
-
-extensions:
-  basicauth/loki:
-    client_auth:
-      username: ${GRAFANA_CLOUD_LOKI_USERNAME}
-      password: ${GRAFANA_CLOUD_LOKI_API_KEY}
+    headers:
+      Authorization: ${OPSPILOT_LOKI_AUTHORIZATION}
 
 service:
-  extensions: [basicauth/loki]
   pipelines:
     logs:
       receivers: [otlp]

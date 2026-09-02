@@ -1,0 +1,6 @@
+# Deploy-time non-secret values for render_service.py (copy to render.vars; do not commit).
+OPSPILOT_CORS_ORIGINS=https://your-frontend.vercel.app
+OPSPILOT_TURNSTILE_SITE_KEY=0x4AAAAAA-turnstile-site-key-placeholder
+OPSPILOT_LOKI_URL=https://logs-prod-XXX.grafana.net
+OPSPILOT_PUBLIC_DOMAIN=your-frontend.vercel.app
+GRAFANA_CLOUD_LOKI_ENDPOINT=https://logs-prod-XXX.grafana.net/loki/api/v1/push

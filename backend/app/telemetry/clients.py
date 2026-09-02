@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -119,6 +121,27 @@ class PrometheusClient:
 class LokiConfig:
     base_url: str
     timeout_seconds: float = 5.0
+    authorization: str | None = None
+
+    def request_headers(self) -> dict[str, str]:
+        if self.authorization:
+            return {"Authorization": self.authorization}
+        return {}
+
+
+def loki_config_from_environ(environ: Mapping[str, str] | None = None) -> LokiConfig:
+    env = environ if environ is not None else os.environ
+    return LokiConfig(
+        base_url=env.get("OPSPILOT_LOKI_URL", "http://localhost:3100"),
+        authorization=_optional_env(env.get("OPSPILOT_LOKI_AUTHORIZATION")),
+    )
+
+
+def _optional_env(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 class LokiClient:
@@ -128,7 +151,8 @@ class LokiClient:
     def is_api_ready(self) -> bool:
         with httpx.Client(timeout=self._config.timeout_seconds) as client:
             response = client.get(
-                f"{self._config.base_url.rstrip('/')}/loki/api/v1/status/buildinfo"
+                f"{self._config.base_url.rstrip('/')}/loki/api/v1/status/buildinfo",
+                headers=self._config.request_headers(),
             )
             response.raise_for_status()
             payload = response.json()
@@ -191,6 +215,7 @@ class LokiClient:
             response = client.get(
                 f"{self._config.base_url.rstrip('/')}/loki/api/v1/query_range",
                 params=params,
+                headers=self._config.request_headers(),
             )
             response.raise_for_status()
             payload = response.json()
