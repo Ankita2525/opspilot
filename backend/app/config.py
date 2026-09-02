@@ -28,6 +28,11 @@ class Environment(str, Enum):
     TEST = "test"
 
 
+class DeploymentProfile(str, Enum):
+    VM_PRODUCTION = "vm_production"
+    EPHEMERAL_LIVE_LAB = "ephemeral_live_lab"
+
+
 class ModelProviderKind(str, Enum):
     GROQ = "groq"
     DETERMINISTIC = "deterministic"
@@ -39,6 +44,7 @@ class OpsPilotSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     environment: Environment = Environment.DEVELOPMENT
+    deployment_profile: DeploymentProfile = DeploymentProfile.VM_PRODUCTION
     model_provider: ModelProviderKind
     groq_api_key: str | None = Field(default=None, repr=False)
     groq_model: str = DEFAULT_GROQ_MODEL
@@ -113,6 +119,9 @@ class OpsPilotSettings(BaseModel):
 
         settings = cls(
             environment=environment,
+            deployment_profile=_parse_deployment_profile(
+                env.get("OPSPILOT_DEPLOYMENT_PROFILE", "vm_production")
+            ),
             model_provider=model_provider,
             groq_api_key=_optional(env.get("GROQ_API_KEY")),
             groq_model=env.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip(),
@@ -212,6 +221,7 @@ class OpsPilotSettings(BaseModel):
         database_status = "configured" if self.database_url else "not_configured"
         summary = {
             "environment": self.environment.value,
+            "deployment_profile": self.deployment_profile.value,
             "model_provider": self.model_provider.value,
             "database": database_status,
             "telemetry_mode": self.telemetry_mode.value,
@@ -227,6 +237,16 @@ def _parse_telemetry_mode(value: str) -> TelemetryMode:
     except ValueError as exc:
         raise ConfigurationError(
             "OPSPILOT_TELEMETRY_MODE must be 'reference' or 'live'."
+        ) from exc
+
+
+def _parse_deployment_profile(value: str) -> DeploymentProfile:
+    try:
+        return DeploymentProfile(value.strip().lower())
+    except ValueError as exc:
+        raise ConfigurationError(
+            "OPSPILOT_DEPLOYMENT_PROFILE must be 'vm_production' or "
+            "'ephemeral_live_lab'."
         ) from exc
 
 
