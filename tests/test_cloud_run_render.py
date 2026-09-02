@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CLOUD_RUN_DIR = ROOT / "deploy" / "cloud-run"
 RENDER_VARS_EXAMPLE = CLOUD_RUN_DIR / "render.vars.example"
 OTEL_IMAGE = "otel/opentelemetry-collector-contrib:0.120.0"
+OTEL_IMAGE_PULL_TIMEOUT_SECONDS = 300
+OTEL_COLLECTOR_STARTUP_TIMEOUT_SECONDS = 15
 
 SENSITIVE_ENV_NAMES = frozenset(
     {
@@ -274,12 +276,37 @@ def test_loki_client_sends_authorization_header() -> None:
     assert captured["headers"] == {"Authorization": "Basic ZmFrZTpwYXNz"}
 
 
+def _docker_pull_otel_image() -> None:
+    result = subprocess.run(
+        ["docker", "pull", OTEL_IMAGE],
+        capture_output=True,
+        text=True,
+        timeout=OTEL_IMAGE_PULL_TIMEOUT_SECONDS,
+        check=False,
+    )
+    combined = f"{result.stdout}\n{result.stderr}".strip()
+    assert result.returncode == 0, f"failed to pull {OTEL_IMAGE}:\n{combined}"
+
+
+def _assert_otel_collector_started(combined: str) -> None:
+    lowered = combined.lower()
+    assert "cannot unmarshal" not in lowered, combined
+    assert "invalid configuration" not in lowered, combined
+    assert "error reading configuration" not in lowered, combined
+    assert "Everything is ready" in combined, (
+        "collector did not report readiness:\n" + combined
+    )
+
+
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker required")
 def test_otel_collector_validates_env_config_locally() -> None:
     render = _load_render_module()
     config = render.build_otel_collector_config(
         "https://logs.example.net/loki/api/v1/push"
     )
+
+    _docker_pull_otel_image()
+
     try:
         result = subprocess.run(
             [
@@ -295,16 +322,16 @@ def test_otel_collector_validates_env_config_locally() -> None:
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=OTEL_COLLECTOR_STARTUP_TIMEOUT_SECONDS,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
-        assert "Everything is ready" in combined
-        assert "invalid configuration" not in combined.lower()
+        combined = f"{exc.stdout or ''}\n{exc.stderr or ''}".strip()
+        _assert_otel_collector_started(combined)
         return
 
-    combined = f"{result.stdout}\n{result.stderr}"
-    assert "cannot unmarshal" not in combined.lower()
-    assert "invalid configuration" not in combined.lower()
-    assert "error reading configuration" not in combined.lower()
+    combined = f"{result.stdout}\n{result.stderr}".strip()
+    assert result.returncode == 0, (
+        f"collector exited with status {result.returncode}:\n{combined}"
+    )
+    _assert_otel_collector_started(combined)
