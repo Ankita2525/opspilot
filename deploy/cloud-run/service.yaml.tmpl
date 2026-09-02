@@ -1,10 +1,10 @@
 # Cloud Run multi-container service — PUBLIC EPHEMERAL LIVE INCIDENT LAB
 #
-# Only the opspilot container receives public ingress (PORT, default 8000 here).
-# Sidecars communicate over localhost inside the instance network namespace.
+# Template — do not deploy directly. Render with:
+#   python deploy/cloud-run/render_service.py --project-id ... --region ... --image-tag ...
 #
-# Deploy with: gcloud run services replace deploy/cloud-run/service.yaml --region=...
-# (Requires built/pushed images and secret substitution — not automated in-repo.)
+# Only the opspilot container receives public ingress (PORT, default 8000).
+# Sidecars communicate over localhost inside the instance network namespace.
 
 apiVersion: serving.knative.dev/v1
 kind: Service
@@ -21,14 +21,24 @@ spec:
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "1"
         run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/secrets: >-
+          opspilot-database-url:projects/{{PROJECT_ID}}/secrets/opspilot-database-url,
+          opspilot-groq-api-key:projects/{{PROJECT_ID}}/secrets/opspilot-groq-api-key,
+          opspilot-sandbox-control-token:projects/{{PROJECT_ID}}/secrets/opspilot-sandbox-control-token,
+          opspilot-turnstile-secret:projects/{{PROJECT_ID}}/secrets/opspilot-turnstile-secret,
+          opspilot-grafana-loki-username:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-username,
+          opspilot-grafana-loki-api-key:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-api-key,
+          opspilot-prometheus-config:projects/{{PROJECT_ID}}/secrets/opspilot-prometheus-config,
+          opspilot-otel-collector-config:projects/{{PROJECT_ID}}/secrets/opspilot-otel-collector-config
     spec:
+      serviceAccountName: opspilot-cloud-run@{{PROJECT_ID}}.iam.gserviceaccount.com
       # Deliberate concurrency: global Postgres lease serializes live mutations;
       # allow concurrent read-only /ready, status, and provenance during SSE Request A.
       containerConcurrency: 10
       timeoutSeconds: 3600
       containers:
         - name: opspilot
-          image: REGION-docker.pkg.dev/PROJECT/opspilot/backend:latest
+          image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/backend:{{IMAGE_TAG}}
           ports:
             - containerPort: 8000
           resources:
@@ -42,10 +52,26 @@ spec:
               value: production
             - name: OPSPILOT_DEPLOYMENT_PROFILE
               value: ephemeral_live_lab
+            - name: OPSPILOT_MODEL_PROVIDER
+              value: groq
             - name: OPSPILOT_TELEMETRY_MODE
               value: live
+            - name: GROQ_MODEL
+              value: openai/gpt-oss-20b
             - name: OPSPILOT_PROMETHEUS_URL
               value: http://127.0.0.1:9090
+            - name: OPSPILOT_LOKI_URL
+              value: "{{OPSPILOT_LOKI_URL}}"
+            - name: OPSPILOT_LOKI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-grafana-loki-username
+                  key: latest
+            - name: OPSPILOT_LOKI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-grafana-loki-api-key
+                  key: latest
             - name: CHECKOUT_API_URL
               value: http://127.0.0.1:8081
             - name: AUTH_SERVICE_URL
@@ -54,6 +80,40 @@ spec:
               value: http://127.0.0.1:8083
             - name: PROVIDER_SERVICE_URL
               value: http://127.0.0.1:8084
+            - name: OPSPILOT_CORS_ORIGINS
+              value: "{{OPSPILOT_CORS_ORIGINS}}"
+            - name: OPSPILOT_SESSION_COOKIE_SECURE
+              value: "true"
+            - name: OPSPILOT_SESSION_COOKIE_SAMESITE
+              value: none
+            - name: OPSPILOT_TRUST_PROXY_HEADERS
+              value: "true"
+            - name: OPSPILOT_TURNSTILE_REQUIRED
+              value: "true"
+            - name: OPSPILOT_TURNSTILE_SITE_KEY
+              value: "{{OPSPILOT_TURNSTILE_SITE_KEY}}"
+            - name: OPSPILOT_PUBLIC_DOMAIN
+              value: "{{OPSPILOT_PUBLIC_DOMAIN}}"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-database-url
+                  key: latest
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-groq-api-key
+                  key: latest
+            - name: SANDBOX_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-sandbox-control-token
+                  key: latest
+            - name: OPSPILOT_TURNSTILE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-turnstile-secret
+                  key: latest
           startupProbe:
             httpGet:
               path: /ready
@@ -67,7 +127,7 @@ spec:
             periodSeconds: 30
 
         - name: checkout-api
-          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
           command: ["uvicorn", "sandbox.checkout.app:app", "--host", "127.0.0.1", "--port", "8081"]
           resources:
             limits:
@@ -78,6 +138,16 @@ spec:
               value: checkout-api
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+            - name: CHECKOUT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-database-url
+                  key: latest
+            - name: SANDBOX_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-sandbox-control-token
+                  key: latest
           startupProbe:
             httpGet:
               path: /health
@@ -87,7 +157,7 @@ spec:
             failureThreshold: 18
 
         - name: auth-service
-          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
           command: ["uvicorn", "sandbox.auth.app:app", "--host", "127.0.0.1", "--port", "8082"]
           resources:
             limits:
@@ -98,6 +168,11 @@ spec:
               value: auth-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+            - name: SANDBOX_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-sandbox-control-token
+                  key: latest
           startupProbe:
             httpGet:
               path: /health
@@ -107,7 +182,7 @@ spec:
             failureThreshold: 18
 
         - name: payments-service
-          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
           command: ["uvicorn", "sandbox.payments.app:app", "--host", "127.0.0.1", "--port", "8083"]
           resources:
             limits:
@@ -120,6 +195,11 @@ spec:
               value: http://127.0.0.1:8084
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+            - name: SANDBOX_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-sandbox-control-token
+                  key: latest
           startupProbe:
             httpGet:
               path: /health
@@ -129,7 +209,7 @@ spec:
             failureThreshold: 18
 
         - name: provider-service
-          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
           command: ["uvicorn", "sandbox.provider.app:app", "--host", "127.0.0.1", "--port", "8084"]
           resources:
             limits:
@@ -140,6 +220,11 @@ spec:
               value: provider-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://127.0.0.1:4318
+            - name: SANDBOX_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-sandbox-control-token
+                  key: latest
           startupProbe:
             httpGet:
               path: /health
@@ -177,6 +262,19 @@ spec:
             limits:
               cpu: "1"
               memory: 256Mi
+          env:
+            - name: GRAFANA_CLOUD_LOKI_ENDPOINT
+              value: "{{GRAFANA_CLOUD_LOKI_ENDPOINT}}"
+            - name: GRAFANA_CLOUD_LOKI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-grafana-loki-username
+                  key: latest
+            - name: GRAFANA_CLOUD_LOKI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opspilot-grafana-loki-api-key
+                  key: latest
           volumeMounts:
             - name: otel-config
               mountPath: /etc/otel-collector-config.yaml
@@ -187,6 +285,12 @@ spec:
         - name: prometheus-config
           secret:
             secretName: opspilot-prometheus-config
+            items:
+              - key: latest
+                path: prometheus.yml
         - name: otel-config
           secret:
-            secretName: opspilot-otel-config
+            secretName: opspilot-otel-collector-config
+            items:
+              - key: latest
+                path: otel-collector-config.yaml

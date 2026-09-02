@@ -1,6 +1,6 @@
 # Public Ephemeral Live Incident Lab — Cloud Run Profile
 
-This deployment profile is **separate** from the [full production architecture](../docker-compose.prod.yml)
+This deployment profile is **separate** from the [full production architecture](../../docker-compose.prod.yml)
 (VM + Caddy + segmented Docker networks). It exists for the public portfolio demo.
 
 ## Goals
@@ -24,6 +24,65 @@ This deployment profile is **separate** from the [full production architecture](
 | `prometheus` | Sidecar (ephemeral TSDB) | `127.0.0.1:9090` |
 | `otel-collector` | Sidecar | `127.0.0.1:4318` |
 
+## Render before deploy
+
+`service.yaml.tmpl` is the checked-in template. **Do not edit image tags manually.**
+
+```bash
+cp deploy/cloud-run/render.vars.example deploy/cloud-run/render.vars
+# Edit render.vars with your Vercel origin, Turnstile site key, Grafana URLs.
+
+python deploy/cloud-run/render_service.py \
+  --project-id opspilot-live-lab \
+  --region us-central1 \
+  --image-tag fa215f3 \
+  --vars-file deploy/cloud-run/render.vars
+```
+
+Output: `deploy/cloud-run/rendered/service.yaml` (gitignored).
+
+Deploy externally:
+
+```bash
+gcloud run services replace deploy/cloud-run/rendered/service.yaml --region=us-central1
+```
+
+## Runtime service account
+
+The rendered manifest sets:
+
+`opspilot-cloud-run@<PROJECT_ID>.iam.gserviceaccount.com`
+
+Grant IAM roles to this account externally (Secret Manager accessor, Artifact Registry reader, etc.).
+
+## Secret Manager (minimum set)
+
+| Secret | Containers |
+|--------|------------|
+| `opspilot-database-url` | `opspilot` (`DATABASE_URL`), `checkout-api` (`CHECKOUT_DATABASE_URL`) |
+| `opspilot-groq-api-key` | `opspilot` |
+| `opspilot-sandbox-control-token` | `opspilot`, all sandbox sidecars |
+| `opspilot-turnstile-secret` | `opspilot` |
+| `opspilot-grafana-loki-username` | `opspilot` (`OPSPILOT_LOKI_USERNAME`), `otel-collector` |
+| `opspilot-grafana-loki-api-key` | `opspilot` (`OPSPILOT_LOKI_API_KEY`), `otel-collector` |
+| `opspilot-prometheus-config` | `prometheus` volume (file content from `prometheus.yml`) |
+| `opspilot-otel-collector-config` | `otel-collector` volume (file content from `otel-collector.yaml`) |
+
+Checkout safely reuses `opspilot-database-url`: production already maps `CHECKOUT_DATABASE_URL=${DATABASE_URL}`; checkout only uses the `checkout_orders` table and does not collide with OpsPilot schema migrations.
+
+Grafana Loki credentials are shared between the OTEL collector (push) and OpsPilot Loki query client (read) via the same username/API-key secrets with different env var names.
+
+## Config file delivery (Prometheus + OTEL)
+
+Cloud Run multi-container services do not support bind mounts or ConfigMaps. The only file-volume mechanism is **Secret Manager secret mounts**. `prometheus.yml` and `otel-collector.yaml` are non-secret configuration payloads stored as secrets for operational delivery only.
+
+Create secrets externally:
+
+```bash
+gcloud secrets create opspilot-prometheus-config --data-file=deploy/cloud-run/prometheus.yml
+gcloud secrets create opspilot-otel-collector-config --data-file=deploy/cloud-run/otel-collector.yaml
+```
+
 ## Concurrency
 
 `containerConcurrency: 10` (deliberate, not Cloud Run default 80):
@@ -46,25 +105,6 @@ All containers in a Cloud Run multi-container instance share the **same network 
 
 Sandbox sidecars (auth, payments, provider) do not require direct Neon access except checkout-api.
 
-## Container startup
-
-**Request A** (investigation stream):
-
-1. Acquire global Postgres lease
-2. Warm sandbox, baseline traffic, activate fault, degraded traffic
-3. Collect Prometheus/Loki evidence
-4. LLM diagnosis → `approval_required`
-5. Persist bounded provenance manifest
-6. SSE ends (instance may scale to zero)
-
-**Request B** (approval):
-
-1. Reconcile durable incident + provenance from Postgres
-2. Rebuild live session; confirm faulty revision active
-3. Resume LangGraph checkpoint; execute rollback
-4. Generate **fresh** post-remediation traffic + verification
-5. Update provenance recovery window; release lease
-
 ## Local validation (no GCP)
 
 ```bash
@@ -86,9 +126,11 @@ python scripts/validate_cloud_run_local.py
 
 | File | Purpose |
 |------|---------|
-| `service.yaml` | Cloud Run multi-container template |
+| `service.yaml.tmpl` | Cloud Run multi-container template |
+| `render_service.py` | Substitute project/region/tag + deploy-time vars |
+| `render.vars.example` | Non-secret deploy-time values |
 | `prometheus.yml` | Localhost scrape targets |
 | `otel-collector.yaml` | OTLP → Grafana Cloud Loki |
-| `env.example` | Environment placeholders |
+| `env.example` | Full environment reference |
 
-Do **not** deploy from this repository without substituting secrets and building images.
+Do **not** deploy from this repository without creating secrets and rendering the manifest.

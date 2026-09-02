@@ -8,7 +8,12 @@ from typing import Any
 
 from backend.app.live.orchestrator import LiveIncidentOrchestrator, LiveIncidentSession
 from backend.app.provenance.models import LiveRunProvenance
-from backend.app.telemetry.clients import LokiClient, LokiConfig, PrometheusClient, PrometheusConfig
+from backend.app.telemetry.clients import (
+    LokiClient,
+    PrometheusClient,
+    PrometheusConfig,
+    loki_config_from_environ,
+)
 from backend.app.telemetry.live import LiveTelemetryBackend
 from backend.app.telemetry.sandbox_remediation import SandboxRemediationBackend
 from sandbox.control import SandboxControlClient
@@ -72,14 +77,7 @@ class LiveSessionReconciler:
                 )
             )
         )
-        loki = LokiClient(
-            LokiConfig(
-                base_url=os.environ.get(
-                    "OPSPILOT_LOKI_URL",
-                    "http://localhost:3100",
-                )
-            )
-        )
+        loki = LokiClient(loki_config_from_environ())
         telemetry = LiveTelemetryBackend(
             service=mapping.affected_service,
             prometheus=prometheus,

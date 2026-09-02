@@ -2,21 +2,40 @@
 
 from __future__ import annotations
 
-import os
-import re
+import importlib.util
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD_RUN_DIR = ROOT / "deploy" / "cloud-run"
-SERVICE_YAML = CLOUD_RUN_DIR / "service.yaml"
+TEMPLATE_PATH = CLOUD_RUN_DIR / "service.yaml.tmpl"
 PROMETHEUS_YML = CLOUD_RUN_DIR / "prometheus.yml"
 LOCAL_COMPOSE = ROOT / "docker-compose.cloud-run-local.yml"
+RENDER_VARS_EXAMPLE = CLOUD_RUN_DIR / "render.vars.example"
+
+
+def _load_render_module():
+    path = CLOUD_RUN_DIR / "render_service.py"
+    spec = importlib.util.spec_from_file_location("cloud_run_render", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _rendered_service_text() -> str:
+    render = _load_render_module()
+    return render.render_service(
+        project_id="test-project",
+        region="us-central1",
+        image_tag="testtag01",
+        extra_vars=render.load_vars_file(RENDER_VARS_EXAMPLE),
+    )
 
 
 def _service_spec() -> dict:
-    import yaml
-
-    return yaml.safe_load(SERVICE_YAML.read_text())
+    return yaml.safe_load(_rendered_service_text())
 
 
 def test_only_opspilot_has_public_port() -> None:
@@ -28,7 +47,7 @@ def test_only_opspilot_has_public_port() -> None:
 
 
 def test_sidecars_use_localhost_command_hosts() -> None:
-    text = SERVICE_YAML.read_text()
+    text = _rendered_service_text()
     for port, name in (
         ("8081", "checkout-api"),
         ("8082", "auth-service"),
@@ -104,7 +123,7 @@ def test_container_dependencies_annotation_present() -> None:
 
 
 def test_prometheus_listen_localhost_only() -> None:
-    text = SERVICE_YAML.read_text()
+    text = _rendered_service_text()
     assert "--web.listen-address=127.0.0.1:9090" in text
 
 
@@ -114,3 +133,9 @@ def test_backend_env_localhost_service_urls() -> None:
     env = {item["name"]: item["value"] for item in opspilot.get("env", []) if "value" in item}
     assert env["CHECKOUT_API_URL"] == "http://127.0.0.1:8081"
     assert env["OPSPILOT_PROMETHEUS_URL"] == "http://127.0.0.1:9090"
+
+
+def test_template_exists_and_is_not_committed_rendered_output() -> None:
+    assert TEMPLATE_PATH.is_file()
+    rendered_dir = CLOUD_RUN_DIR / "rendered"
+    assert not (rendered_dir / "service.yaml").exists()
