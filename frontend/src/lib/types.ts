@@ -156,3 +156,47 @@ export type BaselineEvaluation = {
   average_investigation_steps: number;
   scenario_results: BaselineScenarioEvaluation[];
 };
+
+export type TelemetryWindow = {
+  sample_count: number;
+  window_start?: string | null;
+  window_end?: string | null;
+  p50_latency_ms?: number | null;
+  p95_latency_ms?: number | null;
+  error_rate?: number | null;
+};
+
+export type LiveProvenance = {
+  run_id: string;
+  incident_id: string;
+  telemetry_mode: "live" | "reference";
+  environment: string;
+  service: string;
+  service_revision: string | null;
+  started_at: string;
+  baseline: TelemetryWindow | null;
+  degraded: TelemetryWindow | null;
+  diagnosis: {
+    provider: string;
+    model: string | null;
+    evidence_count: number;
+    generated_at: string | null;
+  } | null;
+  remediation: {
+    typed_action: string | null;
+    approval_required: boolean;
+    approved_at: string | null;
+    executed_at: string | null;
+  } | null;
+  recovery: {
+    sample_count: number | null;
+    p95_latency_ms: number | null;
+    error_rate: number | null;
+    latest_metric_timestamp: string | null;
+    latest_log_timestamp: string | null;
+    all_samples_post_remediation: boolean | null;
+    verified: boolean | null;
+  } | null;
+  ground_truth_visible_to_agent: boolean;
+  evidence_manifest_hash: string | null;
+};

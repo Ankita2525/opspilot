@@ -73,7 +73,8 @@ export type LiveIncidentState = {
   streaming: boolean;
   failed: boolean;
   telemetryMode: string | null;
-  baseline: { p95_latency_ms: number; error_rate_percent: number } | null;
+  baseline: { p95_latency_ms: number; error_rate_percent: number; sample_count?: number } | null;
+  degraded: { p95_latency_ms: number; error_rate_percent: number; sample_count?: number } | null;
   telemetryHealth: string | null;
   metrics: Metrics | null;
   selectedSkills: string[];
@@ -96,6 +97,7 @@ export function createLiveIncidentState(): LiveIncidentState {
     failed: false,
     telemetryMode: null,
     baseline: null,
+    degraded: null,
     telemetryHealth: null,
     metrics: null,
     selectedSkills: [],
@@ -170,6 +172,8 @@ export function applyInvestigationEvent(
     case "baseline_collected":
       next.baseline = readBaseline(event.data);
       break;
+    case "fault_activated":
+      break;
     case "telemetry_source_degraded":
       next.telemetryHealth = "degraded";
       break;
@@ -221,12 +225,19 @@ function applyStepCompleted(
     const latency = readNumber(event.data, "p95_latency_ms");
     const errorRate = readNumber(event.data, "error_rate_percent");
     if (latency !== null && errorRate !== null) {
-      state.metrics = {
+      const metrics = {
         service: state.affectedService ?? "",
         p95_latency_ms: latency,
         error_rate_percent: errorRate,
         timestamp: event.timestamp,
       };
+      state.metrics = metrics;
+      if (state.baseline) {
+        state.degraded = {
+          p95_latency_ms: latency,
+          error_rate_percent: errorRate,
+        };
+      }
     }
     return;
   }
