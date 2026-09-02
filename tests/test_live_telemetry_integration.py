@@ -321,10 +321,13 @@ def test_real_logs_reach_loki_when_stack_running() -> None:
         pytest.skip("Loki API is not reachable")
     since = datetime.now(UTC)
     with httpx.Client(timeout=5.0) as client:
-        response = client.post(
-            f"{auth_url}/internal/control/activate-fault",
-            headers={"X-Sandbox-Control-Token": os.environ.get("SANDBOX_CONTROL_TOKEN", "sandbox-control-test-token")},
-        )
+        try:
+            response = client.post(
+                f"{auth_url}/internal/control/activate-fault",
+                headers={"X-Sandbox-Control-Token": os.environ.get("SANDBOX_CONTROL_TOKEN", "sandbox-control-test-token")},
+            )
+        except httpx.ConnectError:
+            pytest.skip("auth-service is not reachable from the test host")
         if response.status_code == 401:
             pytest.skip("sandbox control token mismatch for live stack")
         response.raise_for_status()

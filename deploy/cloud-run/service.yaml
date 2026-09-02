@@ -1,0 +1,192 @@
+# Cloud Run multi-container service — PUBLIC EPHEMERAL LIVE INCIDENT LAB
+#
+# Only the opspilot container receives public ingress (PORT, default 8000 here).
+# Sidecars communicate over localhost inside the instance network namespace.
+#
+# Deploy with: gcloud run services replace deploy/cloud-run/service.yaml --region=...
+# (Requires built/pushed images and secret substitution — not automated in-repo.)
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: opspilot-live-lab
+  labels:
+    opspilot.deployment_profile: ephemeral_live_lab
+  annotations:
+    run.googleapis.com/container-dependencies: '{"opspilot":["checkout-api","auth-service","payments-service","provider-service","prometheus","otel-collector"]}'
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      # Deliberate concurrency: global Postgres lease serializes live mutations;
+      # allow concurrent read-only /ready, status, and provenance during SSE Request A.
+      containerConcurrency: 10
+      timeoutSeconds: 3600
+      containers:
+        - name: opspilot
+          image: REGION-docker.pkg.dev/PROJECT/opspilot/backend:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: PORT
+              value: "8000"
+            - name: OPSPILOT_ENV
+              value: production
+            - name: OPSPILOT_DEPLOYMENT_PROFILE
+              value: ephemeral_live_lab
+            - name: OPSPILOT_TELEMETRY_MODE
+              value: live
+            - name: OPSPILOT_PROMETHEUS_URL
+              value: http://127.0.0.1:9090
+            - name: CHECKOUT_API_URL
+              value: http://127.0.0.1:8081
+            - name: AUTH_SERVICE_URL
+              value: http://127.0.0.1:8082
+            - name: PAYMENTS_SERVICE_URL
+              value: http://127.0.0.1:8083
+            - name: PROVIDER_SERVICE_URL
+              value: http://127.0.0.1:8084
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+
+        - name: checkout-api
+          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          command: ["uvicorn", "sandbox.checkout.app:app", "--host", "127.0.0.1", "--port", "8081"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: SANDBOX_SERVICE_NAME
+              value: checkout-api
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8081
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
+
+        - name: auth-service
+          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          command: ["uvicorn", "sandbox.auth.app:app", "--host", "127.0.0.1", "--port", "8082"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          env:
+            - name: SANDBOX_SERVICE_NAME
+              value: auth-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8082
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
+
+        - name: payments-service
+          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          command: ["uvicorn", "sandbox.payments.app:app", "--host", "127.0.0.1", "--port", "8083"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          env:
+            - name: SANDBOX_SERVICE_NAME
+              value: payments-service
+            - name: PROVIDER_SERVICE_URL
+              value: http://127.0.0.1:8084
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8083
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
+
+        - name: provider-service
+          image: REGION-docker.pkg.dev/PROJECT/opspilot/sandbox:latest
+          command: ["uvicorn", "sandbox.provider.app:app", "--host", "127.0.0.1", "--port", "8084"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          env:
+            - name: SANDBOX_SERVICE_NAME
+              value: provider-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://127.0.0.1:4318
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8084
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
+
+        - name: prometheus
+          image: prom/prometheus:v3.2.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/tmp/prometheus
+            - --web.listen-address=127.0.0.1:9090
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+              host: 127.0.0.1
+            periodSeconds: 5
+            failureThreshold: 18
+
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.120.0
+          args: ["--config=/etc/otel-collector-config.yaml"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel-collector-config.yaml
+              subPath: otel-collector-config.yaml
+              readOnly: true
+
+      volumes:
+        - name: prometheus-config
+          secret:
+            secretName: opspilot-prometheus-config
+        - name: otel-config
+          secret:
+            secretName: opspilot-otel-config

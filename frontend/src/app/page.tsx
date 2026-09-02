@@ -3,14 +3,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalPanel } from "@/components/ApprovalPanel";
+import { ArchitectureSection } from "@/components/ArchitectureSection";
+import { CommandCenterHeader } from "@/components/CommandCenterHeader";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
 import { IncidentHeader } from "@/components/IncidentHeader";
 import { InspectionSection } from "@/components/InspectionSection";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
+import { LifecycleTimeline } from "@/components/LifecycleTimeline";
+import { LiveProvenancePanel } from "@/components/LiveProvenancePanel";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
 import { ScenarioCard } from "@/components/ScenarioCard";
-import { getRuntimeSummary, getSandboxStatus, getScenarios, submitApproval } from "@/lib/api";
+import { ServiceTopology } from "@/components/ServiceTopology";
+import { TelemetryBands } from "@/components/TelemetryBands";
+import {
+  getIncidentProvenance,
+  getRuntimeSummary,
+  getSandboxStatus,
+  getScenarios,
+  submitApproval,
+} from "@/lib/api";
+import { lifecycleSteps, resolveLabStatus } from "@/lib/command-center";
+import type { Phase } from "@/lib/command-center-types";
 import { streamIncident } from "@/lib/incident-stream";
 import {
   formatErrorRate,
@@ -24,20 +38,7 @@ import {
   type LiveIncidentState,
 } from "@/lib/live-incident";
 import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
-import type { ApprovalRequest, IncidentApprovalResponse, Scenario } from "@/lib/types";
-
-type Phase =
-  | "loading"
-  | "ready"
-  | "investigating"
-  | "active"
-  | "complete"
-  | "resolved"
-  | "rejected"
-  | "failed"
-  | "blocked"
-  | "sandbox_busy"
-  | "capacity_exhausted";
+import type { ApprovalRequest, IncidentApprovalResponse, LiveProvenance, Scenario } from "@/lib/types";
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -53,6 +54,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [sandboxState, setSandboxState] = useState<string | null>(null);
   const [telemetryMode, setTelemetryMode] = useState<string>("reference");
+  const [provenance, setProvenance] = useState<LiveProvenance | null>(null);
+  const [provenanceLoading, setProvenanceLoading] = useState(false);
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
   >("load");
@@ -170,6 +173,13 @@ export default function Home() {
           if (event.event_type === "approval_required") {
             setPhase("active");
             setBusy(false);
+            if (telemetryMode === "live" && event.incident_id) {
+              setProvenanceLoading(true);
+              void getIncidentProvenance(event.incident_id)
+                .then(setProvenance)
+                .catch(() => setProvenance(null))
+                .finally(() => setProvenanceLoading(false));
+            }
           }
           if (event.event_type === "incident_completed") {
             setPhase("complete");
@@ -225,6 +235,17 @@ export default function Home() {
       const result = await submitApproval(live.incidentId, approved);
       setApproval(result);
       setPhase(result.status === "resolved" ? "resolved" : "rejected");
+      if (telemetryMode === "live") {
+        setProvenanceLoading(true);
+        try {
+          const loaded = await getIncidentProvenance(live.incidentId);
+          setProvenance(loaded);
+        } catch {
+          setProvenance(null);
+        } finally {
+          setProvenanceLoading(false);
+        }
+      }
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -304,15 +325,41 @@ export default function Home() {
         service: live.metrics.service || service,
       }
     : null;
+  const labStatus = resolveLabStatus({
+    phase,
+    sandboxState,
+    telemetryMode,
+    investigating: phase === "investigating",
+  });
+  const topologyPhase =
+    phase === "resolved"
+      ? "rollback"
+      : phase === "active" || live?.degraded
+        ? "degraded"
+        : phase === "investigating"
+          ? "traffic"
+          : "idle";
+  const recoveryWindow =
+    approval && approval.recovered_p95_latency_ms !== null
+      ? {
+          p95_latency_ms: approval.recovered_p95_latency_ms ?? 0,
+          error_rate_percent: approval.recovered_error_rate_percent ?? 0,
+          sample_count: provenance?.recovery?.sample_count ?? undefined,
+        }
+      : null;
 
   return (
-    <div className="page-shell">
-      <div className="topbar">
-        <p className="brand">OpsPilot</p>
-        <p className="topbar-meta">Incident command center</p>
-      </div>
+    <div className="page-shell command-center">
+      <CommandCenterHeader
+        labStatus={labStatus}
+        telemetryMode={telemetryMode}
+        service={inWorkspace ? service : undefined}
+        title={inWorkspace ? title : undefined}
+        revision={live?.approval?.version ?? null}
+        phase={inWorkspace ? phase : undefined}
+      />
 
-      <main className="workspace">
+      <main className="workspace command-workspace">
         {inWorkspace && service ? (
           <IncidentHeader
             phase={headerPhase}
@@ -363,10 +410,11 @@ export default function Home() {
             <p className="hero-brand">OpsPilot</p>
             <h1 id="product-heading">Autonomous Production Engineering Agent</h1>
             <p className="hero-copy">
-              Choose a production incident and watch OpsPilot investigate
-              evidence, form a hypothesis, request approval for risky
-              remediation, and verify recovery.
+              Start a live investigation against real sandbox services. OpsPilot
+              gathers runtime evidence, forms a hypothesis, requests human approval
+              for high-risk remediation, and verifies recovery with fresh telemetry.
             </p>
+            <ArchitectureSection />
           </section>
         ) : null}
 
@@ -374,7 +422,7 @@ export default function Home() {
           <section aria-labelledby="scenario-heading">
             <h2 id="scenario-heading" className="section-heading">
               {telemetryMode === "live"
-                ? "Live incident sandbox"
+                ? "Live incident lab"
                 : "Deterministic reference evaluation"}
             </h2>
             <div
@@ -394,11 +442,11 @@ export default function Home() {
             <div className="start-row">
               <button
                 type="button"
-                className="button-primary"
+                className="button-primary button-primary-hero"
                 onClick={() => void handleStart()}
                 disabled={busy || !selectedScenario}
               >
-                Investigate
+                Start live investigation
               </button>
               {selectedScenario ? (
                 <p className="start-hint">
@@ -411,22 +459,36 @@ export default function Home() {
 
         {live && inWorkspace ? (
           <>
-            {live.baseline && telemetryMode === "live" ? (
-              <div className="metric-grid">
-                <MetricCard
-                  label="Baseline p95"
-                  value={formatLatency(live.baseline.p95_latency_ms)}
-                  hint="Measured before fault"
-                  tone="neutral"
-                />
-                <MetricCard
-                  label="Baseline error rate"
-                  value={formatErrorRate(live.baseline.error_rate_percent)}
-                  hint="Measured before fault"
-                  tone="neutral"
-                />
-              </div>
-            ) : null}
+            <ServiceTopology affectedService={service} phase={topologyPhase} />
+            <TelemetryBands
+              mode={telemetryMode}
+              baseline={
+                live.baseline
+                  ? {
+                      ...live.baseline,
+                      sample_count: provenance?.baseline?.sample_count,
+                    }
+                  : null
+              }
+              degraded={
+                live.degraded
+                  ? {
+                      ...live.degraded,
+                      sample_count: provenance?.degraded?.sample_count,
+                    }
+                  : null
+              }
+              recovery={recoveryWindow}
+            />
+            <LifecycleTimeline
+              steps={lifecycleSteps({
+                phase,
+                hasBaseline: Boolean(live.baseline),
+                hasHypothesis: Boolean(live.hypothesis),
+                hasApproval: Boolean(live.approval),
+                resolved: phase === "resolved",
+              })}
+            />
             {originalMetrics ? (
               <div className="metric-grid">
                 <MetricCard
@@ -491,6 +553,8 @@ export default function Home() {
             (phase === "resolved" || phase === "rejected") ? (
               <RecoveryPanel original={originalMetrics} approval={approval} />
             ) : null}
+
+            <LiveProvenancePanel provenance={provenance} loading={provenanceLoading} />
 
             <InspectionSection
               symptomSummary={live.symptomSummary}

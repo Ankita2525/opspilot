@@ -7,6 +7,7 @@ from backend.app.persistence.models import (
     AuditRecord,
     EvaluationRecord,
     IncidentRecord,
+    ProvenanceRecord,
 )
 
 
@@ -22,6 +23,7 @@ class InMemoryOpsPilotRepository:
         self._approvals: dict[str, ApprovalRecord] = {}
         self._audit_events: dict[str, list[AuditRecord]] = {}
         self._evaluations: dict[str, EvaluationRecord] = {}
+        self._provenance: dict[str, ProvenanceRecord] = {}
 
     def save_incident(self, record: IncidentRecord) -> None:
         self._incidents[record.incident_id] = _copy(record)
@@ -66,6 +68,15 @@ class InMemoryOpsPilotRepository:
             for record in self._evaluations.values()
             if record.incident_id == incident_id
         ]
+
+    def save_provenance(self, record: ProvenanceRecord) -> None:
+        self._provenance[record.incident_id] = _copy(record)
+
+    def get_provenance(self, incident_id: str) -> ProvenanceRecord | None:
+        stored = self._provenance.get(incident_id)
+        if stored is None:
+            return None
+        return _copy(stored)
 
     def list_expired_incidents(self, as_of: datetime) -> list[tuple[str, str | None]]:
         from datetime import timezone

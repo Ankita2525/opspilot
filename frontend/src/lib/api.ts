@@ -3,6 +3,7 @@ import type {
   IncidentApprovalResponse,
   IncidentAudit,
   IncidentStartResponse,
+  LiveProvenance,
   Scenario,
 } from "@/lib/types";
 
@@ -87,6 +88,7 @@ export function getBaselineEvaluation(): Promise<BaselineEvaluation> {
 
 export type RuntimeSummary = {
   environment: string;
+  deployment_profile?: string;
   model_provider: string;
   database: string;
   telemetry_mode: string;
@@ -104,4 +106,8 @@ export function getSandboxStatus(): Promise<SandboxStatus> {
 
 export function getRuntimeSummary(): Promise<RuntimeSummary> {
   return request<RuntimeSummary>("/api/runtime");
+}
+
+export function getIncidentProvenance(incidentId: string): Promise<LiveProvenance> {
+  return request<LiveProvenance>(`/api/incidents/${incidentId}/provenance`);
 }
