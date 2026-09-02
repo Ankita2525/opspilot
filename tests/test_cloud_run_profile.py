@@ -64,6 +64,13 @@ def test_min_and_max_instances() -> None:
     assert annotations["autoscaling.knative.dev/maxScale"] == "1"
 
 
+def test_request_based_billing_cpu_throttling_enabled() -> None:
+    annotations = _service_spec()["spec"]["template"]["metadata"]["annotations"]
+    assert annotations["run.googleapis.com/cpu-throttling"] == "true"
+    assert annotations["autoscaling.knative.dev/minScale"] == "0"
+    assert annotations["autoscaling.knative.dev/maxScale"] == "1"
+
+
 def test_prometheus_scrapes_localhost_sidecars() -> None:
     text = PROMETHEUS_YML.read_text()
     for port in ("8081", "8082", "8083", "8084"):
