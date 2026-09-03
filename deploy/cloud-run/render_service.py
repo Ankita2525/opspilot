@@ -52,6 +52,13 @@ SECRET_VERSION_VARS: dict[str, str] = {
 NUMERIC_VERSION = re.compile(r"^[1-9][0-9]*$")
 SECRET_KEY_LATEST = re.compile(r"key:\s*['\"]?latest['\"]?\b")
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+# Cloud Run startup probes cannot reach loopback-only listeners (rev 00002).
+LOOPBACK_ONLY_LISTEN_PATTERNS = (
+    re.compile(r'"--host",\s*"127\.0\.0\.1"'),
+    re.compile(r"--host=127\.0\.0\.1\b"),
+    re.compile(r"--web\.listen-address=127\.0\.0\.1:"),
+    re.compile(r"endpoint:\s*127\.0\.0\.1:\d+"),
+)
 
 
 def load_vars_file(path: Path) -> dict[str, str]:
@@ -151,6 +158,13 @@ def render_service(
             "Rendered manifest must not use secretKeyRef/volume key 'latest'; "
             "pin explicit numeric Secret Manager versions."
         )
+    for pattern in LOOPBACK_ONLY_LISTEN_PATTERNS:
+        if pattern.search(rendered):
+            raise ValueError(
+                "Rendered manifest must not bind probed sidecars to 127.0.0.1 only; "
+                "Cloud Run startup probes require 0.0.0.0 (clients may still use "
+                "http://127.0.0.1)."
+            )
 
     return rendered
 

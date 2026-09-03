@@ -1,7 +1,7 @@
 # Local Cloud Run topology emulation (no GCP credentials required).
 #
 # Sidecars share the backend network namespace — same as Cloud Run multi-container.
-# Service URLs use 127.0.0.1:* boundaries matching deploy/cloud-run/env.example.
+# Listen on 0.0.0.0 (Cloud Run probe contract); clients still dial 127.0.0.1:*.
 #
 # Usage:
 #   docker compose -f docker-compose.cloud-run-local.yml up --build
@@ -86,7 +86,7 @@ services:
       context: .
       dockerfile: sandbox/Dockerfile
     network_mode: service:backend
-    command: ["uvicorn", "sandbox.checkout.app:app", "--host", "127.0.0.1", "--port", "8081"]
+    command: ["uvicorn", "sandbox.checkout.app:app", "--host", "0.0.0.0", "--port", "8081"]
     environment:
       SANDBOX_SERVICE_NAME: checkout-api
       CHECKOUT_DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
@@ -103,7 +103,7 @@ services:
       context: .
       dockerfile: sandbox/Dockerfile
     network_mode: service:backend
-    command: ["uvicorn", "sandbox.auth.app:app", "--host", "127.0.0.1", "--port", "8082"]
+    command: ["uvicorn", "sandbox.auth.app:app", "--host", "0.0.0.0", "--port", "8082"]
     environment:
       SANDBOX_SERVICE_NAME: auth-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
@@ -117,7 +117,7 @@ services:
       context: .
       dockerfile: sandbox/Dockerfile
     network_mode: service:backend
-    command: ["uvicorn", "sandbox.provider.app:app", "--host", "127.0.0.1", "--port", "8084"]
+    command: ["uvicorn", "sandbox.provider.app:app", "--host", "0.0.0.0", "--port", "8084"]
     environment:
       SANDBOX_SERVICE_NAME: provider-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
@@ -131,7 +131,7 @@ services:
       context: .
       dockerfile: sandbox/Dockerfile
     network_mode: service:backend
-    command: ["uvicorn", "sandbox.payments.app:app", "--host", "127.0.0.1", "--port", "8083"]
+    command: ["uvicorn", "sandbox.payments.app:app", "--host", "0.0.0.0", "--port", "8083"]
     environment:
       SANDBOX_SERVICE_NAME: payments-service
       PROVIDER_SERVICE_URL: http://127.0.0.1:8084
@@ -147,7 +147,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/tmp/prometheus
-      - --web.listen-address=127.0.0.1:9090
+      - --web.listen-address=0.0.0.0:9090
     volumes:
       - ./deploy/cloud-run/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:

@@ -1,12 +1,13 @@
-# OTEL collector for Cloud Run multi-container (localhost sandbox exporters).
-# Loaded via --config=env:OTEL_COLLECTOR_CONFIG at runtime.
+# OTEL collector for Cloud Run multi-container.
+# Receivers bind 0.0.0.0 so Cloud Run TCP startup probes can succeed.
+# In-instance OTLP clients still dial the shared loopback port.
 receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 127.0.0.1:4317
+        endpoint: 0.0.0.0:4317
       http:
-        endpoint: 127.0.0.1:4318
+        endpoint: 0.0.0.0:4318
 
 processors:
   batch:
