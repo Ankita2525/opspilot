@@ -7,15 +7,13 @@ RUN npm ci
 
 FROM deps AS builder
 
-ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
-
 COPY . .
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 
 ENV NODE_ENV=production
+ENV OPSPILOT_API_TARGET=http://backend:8000
 
 WORKDIR /app
 

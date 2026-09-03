@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalPanel } from "@/components/ApprovalPanel";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { ArchitectureSection } from "@/components/ArchitectureSection";
 import { CommandCenterHeader } from "@/components/CommandCenterHeader";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
@@ -55,6 +56,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [sandboxState, setSandboxState] = useState<string | null>(null);
   const [telemetryMode, setTelemetryMode] = useState<string>("reference");
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState(
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "",
+  );
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileStatus, setTurnstileStatus] = useState<
+    "loading" | "ready" | "error" | "expired" | "idle"
+  >("idle");
+  const [turnstileReset, setTurnstileReset] = useState(0);
   const [provenance, setProvenance] = useState<LiveProvenance | null>(null);
   const [provenanceLoading, setProvenanceLoading] = useState(false);
   const [retryAction, setRetryAction] = useState<
@@ -127,6 +136,9 @@ export default function Home() {
           if (runtime?.telemetry_mode) {
             setTelemetryMode(runtime.telemetry_mode);
           }
+          if (runtime?.turnstile_site_key) {
+            setTurnstileSiteKey(runtime.turnstile_site_key);
+          }
           if (status?.state) {
             setSandboxState(status.state);
           }
@@ -168,6 +180,12 @@ export default function Home() {
     if (!selectedScenario) {
       return;
     }
+    if (turnstileSiteKey && !turnstileToken) {
+      setError("Complete the Cloudflare check before starting a live incident.");
+      return;
+    }
+    const capturedToken = turnstileToken;
+    setTurnstileToken(null);
     const generation = supersedeStream();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -182,6 +200,7 @@ export default function Home() {
     try {
       await streamIncident({
         scenarioId: selectedScenario.id,
+        turnstileToken: capturedToken,
         signal: controller.signal,
         onEvent: (event) => {
           if (generation !== generationRef.current) {
@@ -241,6 +260,7 @@ export default function Home() {
           abortRef.current = null;
         }
       }
+      setTurnstileReset((current) => current + 1);
     }
   }
 
@@ -460,11 +480,38 @@ export default function Home() {
               ))}
             </div>
             <div className="start-row">
+              {turnstileSiteKey ? (
+                <div className="turnstile-panel">
+                  <TurnstileWidget
+                    siteKey={turnstileSiteKey}
+                    onToken={setTurnstileToken}
+                    onStatus={setTurnstileStatus}
+                    resetSignal={turnstileReset}
+                  />
+                  {turnstileStatus === "loading" ? (
+                    <p className="turnstile-status">Verifying you are human…</p>
+                  ) : null}
+                  {turnstileStatus === "error" ? (
+                    <p className="turnstile-status">
+                      Cloudflare check failed. Retry the widget to continue.
+                    </p>
+                  ) : null}
+                  {turnstileStatus === "expired" ? (
+                    <p className="turnstile-status">
+                      Cloudflare check expired. Complete it again to start.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="button-primary button-primary-hero"
                 onClick={() => void handleStart()}
-                disabled={busy || !selectedScenario}
+                disabled={
+                  busy ||
+                  !selectedScenario ||
+                  Boolean(turnstileSiteKey && !turnstileToken)
+                }
               >
                 Start live investigation
               </button>
