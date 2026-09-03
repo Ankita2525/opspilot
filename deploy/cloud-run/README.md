@@ -42,10 +42,58 @@ python deploy/cloud-run/render_service.py \
 
 Output: `deploy/cloud-run/rendered/service.yaml` (gitignored).
 
-Deploy externally:
+## Pre-deploy gate (required)
+
+No real Cloud Run deploy may run unless **all three** checks pass, in order.
+
+**A. Cloud Run render/profile tests**
 
 ```bash
-gcloud run services replace deploy/cloud-run/rendered/service.yaml --region=us-central1
+uv run pytest -q tests/test_cloud_run_profile.py tests/test_cloud_run_render.py tests/test_cloud_run_db_preflight.py
+```
+
+**B. Production DB secret parse + real `SELECT 1`**
+
+Use the same `psycopg`/libpq as the Cloud Run images (`uv run`, lockfile `psycopg==3.3.4`). Supply the Secret Manager value only as an environment variable; do not echo it.
+
+```bash
+DATABASE_URL="$(gcloud secrets versions access latest \
+  --secret=opspilot-database-url \
+  --project=opspilot-live-lab)" \
+  uv run python deploy/cloud-run/preflight_database.py
+```
+
+Expected stdout:
+
+```
+DATABASE_URL parse: PASS
+PostgreSQL connection: PASS
+SELECT 1: PASS
+```
+
+The secret must be **exactly one** canonical Neon URI, for example:
+
+`postgresql://USER:PASSWORD@HOST/DB?sslmode=require&channel_binding=require`
+
+Do not concatenate two URLs. Do not strip `channel_binding` or weaken `sslmode`.
+
+**C. Cloud Run server-side validation (dry-run only)**
+
+```bash
+gcloud run services replace \
+  deploy/cloud-run/rendered/service.yaml \
+  --project=opspilot-live-lab \
+  --region=us-central1 \
+  --dry-run
+```
+
+Real deploy (only after A–C pass, and only when explicitly requested):
+
+```bash
+gcloud run services replace \
+  deploy/cloud-run/rendered/service.yaml \
+  --project=opspilot-live-lab \
+  --region=us-central1
 ```
 
 ## Public access
@@ -132,6 +180,7 @@ python scripts/validate_cloud_run_local.py
 |------|---------|
 | `service.yaml.tmpl` | Cloud Run multi-container template |
 | `render_service.py` | Substitute project/region/tag + deploy-time vars |
+| `preflight_database.py` | Parse `DATABASE_URL` with libpq and run `SELECT 1` (no secret output) |
 | `render.vars.example` | Non-secret deploy-time values |
 | `prometheus.yml` | Localhost scrape targets (uploaded to Secret Manager) |
 | `otel-collector.yaml` | Source for embedded OTEL config (not stored in Secret Manager) |
