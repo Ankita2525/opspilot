@@ -44,40 +44,41 @@ Output: `deploy/cloud-run/rendered/service.yaml` (gitignored).
 
 ## Pre-deploy gate (required)
 
-No real Cloud Run deploy may run unless **all three** checks pass, in order.
+No real Cloud Run deploy may run unless **all four** checks pass, in order.
 
-**A. Cloud Run render/profile tests**
+Secret Manager versions are **pinned** in `render.vars` (never `latest`). Cloud Run
+only creates a new revision when the service template changes; rotating a secret
+value without bumping its pin does not create a fresh revision.
 
-```bash
-uv run pytest -q tests/test_cloud_run_profile.py tests/test_cloud_run_render.py tests/test_cloud_run_db_preflight.py
-```
-
-**B. Production DB secret parse + real `SELECT 1`**
-
-Use the same `psycopg`/libpq as the Cloud Run images (`uv run`, lockfile `psycopg==3.3.4`). Supply the Secret Manager value only as an environment variable; do not echo it.
+**A. Pinned Secret Manager versions exist + ENABLED; DB pin passes `SELECT 1`**
 
 ```bash
-DATABASE_URL="$(gcloud secrets versions access latest \
-  --secret=opspilot-database-url \
-  --project=opspilot-live-lab)" \
-  uv run python deploy/cloud-run/preflight_database.py
+uv run python deploy/cloud-run/preflight_secret_pins.py \
+  --project=opspilot-live-lab \
+  --vars-file=deploy/cloud-run/render.vars
 ```
 
-Expected stdout:
+**B. Cloud Run render/profile + DB preflight unit tests**
 
+```bash
+uv run pytest -q \
+  tests/test_cloud_run_profile.py \
+  tests/test_cloud_run_render.py \
+  tests/test_cloud_run_db_preflight.py \
+  tests/test_cloud_run_secret_pins.py
 ```
-DATABASE_URL parse: PASS
-PostgreSQL connection: PASS
-SELECT 1: PASS
+
+**C. Render with an immutable image tag and pinned secret versions**
+
+```bash
+python deploy/cloud-run/render_service.py \
+  --project-id opspilot-live-lab \
+  --region us-central1 \
+  --image-tag <git-sha> \
+  --vars-file deploy/cloud-run/render.vars
 ```
 
-The secret must be **exactly one** canonical Neon URI, for example:
-
-`postgresql://USER:PASSWORD@HOST/DB?sslmode=require&channel_binding=require`
-
-Do not concatenate two URLs. Do not strip `channel_binding` or weaken `sslmode`.
-
-**C. Cloud Run server-side validation (dry-run only)**
+**D. Cloud Run server-side validation (dry-run only)**
 
 ```bash
 gcloud run services replace \
@@ -87,7 +88,7 @@ gcloud run services replace \
   --dry-run
 ```
 
-Real deploy (only after A–C pass, and only when explicitly requested):
+Real deploy (only after A–D pass, and only when explicitly requested):
 
 ```bash
 gcloud run services replace \
@@ -96,6 +97,12 @@ gcloud run services replace \
   --region=us-central1
 ```
 
+The database secret must be **exactly one** canonical Neon URI, for example:
+
+`postgresql://USER:PASSWORD@HOST/DB?sslmode=require&channel_binding=require`
+
+Do not concatenate two URLs. Do not strip `channel_binding` or weaken `sslmode`.
+Do not pin `opspilot-database-url` to disabled version `1`.
 ## Public access
 
 The rendered manifest sets `run.googleapis.com/invoker-iam-disabled: "true"` on the
@@ -179,9 +186,10 @@ python scripts/validate_cloud_run_local.py
 | File | Purpose |
 |------|---------|
 | `service.yaml.tmpl` | Cloud Run multi-container template |
-| `render_service.py` | Substitute project/region/tag + deploy-time vars |
+| `render_service.py` | Substitute project/region/tag + deploy-time vars + secret version pins |
 | `preflight_database.py` | Parse `DATABASE_URL` with libpq and run `SELECT 1` (no secret output) |
-| `render.vars.example` | Non-secret deploy-time values |
+| `preflight_secret_pins.py` | Confirm pinned versions are ENABLED; DB pin parse/connect/`SELECT 1` |
+| `render.vars.example` | Non-secret deploy-time values + explicit secret version pins |
 | `prometheus.yml` | Localhost scrape targets (uploaded to Secret Manager) |
 | `otel-collector.yaml` | Source for embedded OTEL config (not stored in Secret Manager) |
 | `env.example` | Full environment reference |
