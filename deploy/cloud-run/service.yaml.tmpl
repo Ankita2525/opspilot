@@ -5,7 +5,7 @@
 #
 # Only the opspilot container receives public ingress (containerPort 8000).
 # Cloud Run injects PORT for that container; do not set reserved runtime env names.
-# Sidecars communicate over localhost inside the instance network namespace.
+# Sidecars listen on 0.0.0.0 for Cloud Run probes; clients dial http://127.0.0.1:<port>.
 
 apiVersion: serving.knative.dev/v1
 kind: Service
