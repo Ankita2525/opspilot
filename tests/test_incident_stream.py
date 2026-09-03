@@ -322,11 +322,26 @@ def test_failure_event_does_not_expose_stack_trace() -> None:
 
     assert response.status_code == 200
     assert events[-1]["event_type"] == "incident_failed"
-    assert events[-1]["data"]["error"] == "investigation_failed"
+    assert events[-1]["data"]["error"] == "diagnosis_unavailable"
     assert "Traceback" not in body
     assert "GROQ_API_KEY" not in body
     assert "DATABASE_URL" not in body
     assert "stack trace" not in body
+
+
+def test_forced_hypothesis_failure_persists_failed_not_in_progress() -> None:
+    client, repo = _client(provider=_ExplodingProvider())
+    response = _stream(client)
+    events = _parse_sse(response.text)
+    incident_id = events[0]["incident_id"]
+
+    assert events[-1]["event_type"] == "incident_failed"
+    record = repo.get_incident(incident_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert record.status != "in_progress"
+    audits = repo.list_audit_events(incident_id)
+    assert any(item.event_type == "incident_failed" for item in audits)
 
 
 def test_independent_streams_do_not_share_event_state() -> None:

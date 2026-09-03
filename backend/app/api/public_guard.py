@@ -165,7 +165,13 @@ def require_incident_owner(
 def incident_expires_at(hardening: SandboxHardening) -> datetime | None:
     if not hardening.enforce_live_guards:
         return None
-    return datetime.now(UTC) + timedelta(seconds=hardening.incident_ttl_seconds)
+    # Approval window is strictly less than sidecar fault TTL (default 240 < 300).
+    timeout = getattr(
+        hardening,
+        "approval_timeout_seconds",
+        hardening.incident_ttl_seconds,
+    )
+    return datetime.now(UTC) + timedelta(seconds=timeout)
 
 
 def sandbox_status(hardening: SandboxHardening) -> dict[str, object]:

@@ -99,6 +99,8 @@ def test_cookie_attributes_on_session_create() -> None:
         enforce_live_guards=False,
         lease_ttl_seconds=600,
         incident_ttl_seconds=1800,
+        approval_timeout_seconds=240,
+        fault_ttl_seconds=300,
         session_cookie_secure=settings.session_cookie_secure,
         session_cookie_samesite=settings.session_cookie_samesite,
         session_cookie_domain=settings.session_cookie_domain,
@@ -174,7 +176,7 @@ def test_cleanup_rollback_failure_quarantines_and_blocks_acquire() -> None:
     live = MagicMock()
     live.current_revision = "bad"
     live.mapping.healthy_revision = "good"
-    live.control.rollback.side_effect = RuntimeError("rollback failed")
+    live.control.clear_fault.side_effect = RuntimeError("clear failed")
     session = MagicMock()
     session.live_session = live
     session_store.get_optional.return_value = session
@@ -232,6 +234,8 @@ def test_readiness_degraded_when_prometheus_unavailable() -> None:
         enforce_live_guards=True,
         lease_ttl_seconds=600,
         incident_ttl_seconds=1800,
+        approval_timeout_seconds=240,
+        fault_ttl_seconds=300,
         session_cookie_secure=False,
         session_cookie_samesite="lax",
         session_cookie_domain=None,
@@ -281,6 +285,8 @@ def test_turnstile_failure_raises_before_lease() -> None:
         enforce_live_guards=True,
         lease_ttl_seconds=600,
         incident_ttl_seconds=1800,
+        approval_timeout_seconds=240,
+        fault_ttl_seconds=300,
         session_cookie_secure=False,
         session_cookie_samesite="lax",
         session_cookie_domain=None,

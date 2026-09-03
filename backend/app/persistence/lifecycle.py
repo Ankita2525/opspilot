@@ -63,6 +63,68 @@ class IncidentLifecyclePersistence:
         )
         return timestamp
 
+    def record_incident_failed(
+        self,
+        *,
+        incident_id: str,
+        reason: str,
+        stage: str | None = None,
+        selected_skills: list[str] | None = None,
+        diagnostic: dict | None = None,
+    ) -> None:
+        """Idempotent terminal transition to failed.
+
+        Never invents hypothesis/remediation/recovery. Preserves partial skills
+        only when the caller supplies skills that were genuinely selected.
+        """
+        timestamp = self._now()
+        existing = self._repository.get_incident(incident_id)
+        if existing is None:
+            return
+        terminal = {
+            "failed",
+            "resolved",
+            "rejected",
+            "remediation_failed",
+            "blocked_by_telemetry",
+            "abandoned",
+            "expired",
+            "cleanup_failed",
+            "timed_out",
+        }
+        if existing.status in terminal:
+            return
+        metadata: dict = {
+            "reason": reason,
+            "stage": stage,
+        }
+        if diagnostic:
+            metadata["diagnostic"] = diagnostic
+        update: dict = {
+            "status": "failed",
+            "updated_at": timestamp,
+            "resolved": False,
+            "recommended_action": None,
+        }
+        if selected_skills is not None:
+            update["selected_skills"] = list(selected_skills)
+        self._repository.save_incident(existing.model_copy(update=update))
+        # Cancel any pending approval rows for this incident.
+        for approval in self._repository.list_approvals(incident_id):
+            if approval.status == "pending":
+                self._repository.save_approval(
+                    approval.model_copy(
+                        update={"status": "cancelled", "updated_at": timestamp}
+                    )
+                )
+        self._append_audit(
+            incident_id=incident_id,
+            event_type="incident_failed",
+            message="Investigation could not be completed.",
+            timestamp=timestamp,
+            metadata={k: v for k, v in metadata.items() if v is not None},
+        )
+
     def record_start_result(
         self,
         *,

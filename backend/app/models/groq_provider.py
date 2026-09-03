@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
+import random
 import re
+import time
 from typing import Any
 
+import groq
 from groq import Groq
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+
+from backend.app.models.provider_errors import (
+    ModelCallError,
+    ProviderErrorCategory,
+    ProviderFailureMeta,
+)
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+MAX_HTTP_ATTEMPTS = 3
+DEFAULT_BASE_DELAY_SECONDS = 0.5
+DEFAULT_MAX_DELAY_SECONDS = 8.0
+
+logger = logging.getLogger(__name__)
 
 
 class GroqModelProvider:
@@ -21,8 +36,14 @@ class GroqModelProvider:
         model: str = DEFAULT_GROQ_MODEL,
         *,
         client: Groq | None = None,
+        max_attempts: int = MAX_HTTP_ATTEMPTS,
+        base_delay_seconds: float = DEFAULT_BASE_DELAY_SECONDS,
+        max_delay_seconds: float = DEFAULT_MAX_DELAY_SECONDS,
     ) -> None:
         self.model = model
+        self._max_attempts = max(1, max_attempts)
+        self._base_delay_seconds = base_delay_seconds
+        self._max_delay_seconds = max_delay_seconds
         if client is not None:
             self._client = client
             return
@@ -39,27 +60,145 @@ class GroqModelProvider:
         system_prompt: str,
         user_prompt: str,
         response_model: type[T],
+        *,
+        stage: str | None = None,
+        incident_id: str | None = None,
     ) -> T:
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": _schema_name(response_model),
-                    "strict": True,
-                    "schema": groq_strict_schema(response_model.model_json_schema()),
+        last_error: ModelCallError | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                return self._generate_once(
+                    system_prompt,
+                    user_prompt,
+                    response_model,
+                    attempt=attempt,
+                    stage=stage,
+                    incident_id=incident_id,
+                )
+            except ModelCallError as exc:
+                last_error = exc
+                if not exc.retryable or attempt >= self._max_attempts:
+                    logger.warning(
+                        "model_call_failed %s",
+                        json.dumps(exc.meta.safe_log_dict(), sort_keys=True),
+                    )
+                    raise
+                delay = self._backoff_seconds(attempt, exc.meta.retry_after_seconds)
+                logger.info(
+                    "model_call_retry %s",
+                    json.dumps(
+                        {
+                            **exc.meta.safe_log_dict(),
+                            "next_delay_seconds": round(delay, 3),
+                        },
+                        sort_keys=True,
+                    ),
+                )
+                time.sleep(delay)
+        assert last_error is not None
+        raise last_error
+
+    def _generate_once[T: BaseModel](
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[T],
+        *,
+        attempt: int,
+        stage: str | None,
+        incident_id: str | None,
+    ) -> T:
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": _schema_name(response_model),
+                        "strict": True,
+                        "schema": groq_strict_schema(response_model.model_json_schema()),
+                    },
                 },
-            },
-            include_reasoning=False,
-        )
+                include_reasoning=False,
+            )
+        except Exception as exc:
+            raise _classify_transport_error(
+                exc,
+                attempt=attempt,
+                stage=stage,
+                incident_id=incident_id,
+            ) from exc
+
+        usage = _token_usage(response)
         content = _message_content(response)
+        if _is_refusal(response, content):
+            raise ModelCallError(
+                ProviderFailureMeta(
+                    category=ProviderErrorCategory.REFUSAL,
+                    exception_class="Refusal",
+                    retry_attempt=attempt,
+                    stage=stage,
+                    incident_id=incident_id,
+                    token_usage=usage,
+                    output_length=len(content) if content else 0,
+                )
+            )
         if not content:
-            raise RuntimeError("Groq returned empty structured output.")
-        return response_model.model_validate(json.loads(content))
+            raise ModelCallError(
+                ProviderFailureMeta(
+                    category=ProviderErrorCategory.EMPTY_RESPONSE,
+                    exception_class="RuntimeError",
+                    retry_attempt=attempt,
+                    stage=stage,
+                    incident_id=incident_id,
+                    token_usage=usage,
+                    output_length=0,
+                ),
+                message="Groq returned empty structured output.",
+            )
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ModelCallError(
+                ProviderFailureMeta(
+                    category=ProviderErrorCategory.JSON_PARSE,
+                    exception_class="JSONDecodeError",
+                    retry_attempt=attempt,
+                    stage=stage,
+                    incident_id=incident_id,
+                    token_usage=usage,
+                    output_length=len(content),
+                    parse_error_position=exc.pos,
+                )
+            ) from exc
+        try:
+            return response_model.model_validate(payload)
+        except ValidationError as exc:
+            raise ModelCallError(
+                ProviderFailureMeta(
+                    category=ProviderErrorCategory.VALIDATION,
+                    exception_class="ValidationError",
+                    retry_attempt=attempt,
+                    stage=stage,
+                    incident_id=incident_id,
+                    token_usage=usage,
+                    output_length=len(content),
+                    validation_fields=_validation_fields(exc),
+                )
+            ) from exc
+
+    def _backoff_seconds(self, attempt: int, retry_after: float | None) -> float:
+        if retry_after is not None and retry_after > 0:
+            return min(self._max_delay_seconds, float(retry_after))
+        delay = min(
+            self._max_delay_seconds,
+            self._base_delay_seconds * (2 ** (attempt - 1)),
+        )
+        return delay + random.uniform(0, delay * 0.25)
 
 
 def groq_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -131,3 +270,123 @@ def _message_content(response: object) -> str | None:
         return None
     content = getattr(message, "content", None)
     return content if isinstance(content, str) else None
+
+
+def _is_refusal(response: object, content: str | None) -> bool:
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return False
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return False
+    refusal = getattr(message, "refusal", None)
+    if isinstance(refusal, str) and refusal.strip():
+        return True
+    finish = getattr(choices[0], "finish_reason", None)
+    return finish == "content_filter"
+
+
+def _token_usage(response: object) -> dict[str, int] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    payload: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, int):
+            payload[key] = value
+    return payload or None
+
+
+def _validation_fields(exc: ValidationError) -> tuple[str, ...]:
+    fields: list[str] = []
+    for error in exc.errors():
+        loc = error.get("loc") or ()
+        parts = [str(item) for item in loc if item != "__root__"]
+        if parts:
+            fields.append(".".join(parts))
+    return tuple(dict.fromkeys(fields))
+
+
+def _classify_transport_error(
+    exc: Exception,
+    *,
+    attempt: int,
+    stage: str | None,
+    incident_id: str | None,
+) -> ModelCallError:
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    provider_code = None
+    provider_type = None
+    retry_after = _retry_after_seconds(exc)
+    if isinstance(body, dict):
+        err = body.get("error") if isinstance(body.get("error"), dict) else body
+        if isinstance(err, dict):
+            code = err.get("code")
+            err_type = err.get("type")
+            provider_code = str(code) if code is not None else None
+            provider_type = str(err_type) if err_type is not None else None
+
+    if isinstance(exc, groq.RateLimitError) or status == 429:
+        category = ProviderErrorCategory.RATE_LIMITED
+    elif isinstance(exc, (groq.AuthenticationError, groq.PermissionDeniedError)) or status in {
+        401,
+        403,
+    }:
+        category = ProviderErrorCategory.AUTH
+    elif isinstance(exc, groq.BadRequestError) or status == 400:
+        category = ProviderErrorCategory.BAD_REQUEST
+    elif isinstance(exc, groq.APITimeoutError) or isinstance(exc, TimeoutError):
+        category = ProviderErrorCategory.TIMEOUT
+    elif isinstance(exc, groq.APIConnectionError):
+        category = ProviderErrorCategory.NETWORK
+    elif isinstance(exc, groq.InternalServerError) or (
+        isinstance(status, int) and status >= 500
+    ):
+        category = ProviderErrorCategory.PROVIDER_5XX
+    elif isinstance(exc, groq.APIStatusError) and isinstance(status, int):
+        if status == 429:
+            category = ProviderErrorCategory.RATE_LIMITED
+        elif status in {401, 403}:
+            category = ProviderErrorCategory.AUTH
+        elif status == 400:
+            category = ProviderErrorCategory.BAD_REQUEST
+        elif status >= 500:
+            category = ProviderErrorCategory.PROVIDER_5XX
+        else:
+            category = ProviderErrorCategory.UNKNOWN
+    else:
+        category = ProviderErrorCategory.UNKNOWN
+
+    return ModelCallError(
+        ProviderFailureMeta(
+            category=category,
+            exception_class=type(exc).__name__,
+            http_status=status if isinstance(status, int) else None,
+            provider_code=provider_code,
+            provider_type=provider_type,
+            retry_attempt=attempt,
+            stage=stage,
+            incident_id=incident_id,
+            retry_after_seconds=retry_after,
+        )
+    )
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = None
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None

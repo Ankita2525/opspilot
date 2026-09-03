@@ -45,6 +45,8 @@ class SandboxHardening:
     enforce_live_guards: bool
     lease_ttl_seconds: int
     incident_ttl_seconds: int
+    approval_timeout_seconds: int
+    fault_ttl_seconds: int
     session_cookie_secure: bool
     session_cookie_samesite: str
     session_cookie_domain: str | None
@@ -116,6 +118,8 @@ def build_sandbox_hardening(
         enforce_live_guards=enforce,
         lease_ttl_seconds=settings.lease_ttl_seconds,
         incident_ttl_seconds=settings.incident_ttl_seconds,
+        approval_timeout_seconds=settings.approval_timeout_seconds,
+        fault_ttl_seconds=settings.fault_ttl_seconds,
         session_cookie_secure=settings.session_cookie_secure,
         session_cookie_samesite=settings.session_cookie_samesite,
         session_cookie_domain=settings.session_cookie_domain,
@@ -139,8 +143,10 @@ def _in_memory_hardening(*, enforce_live_guards: bool) -> SandboxHardening:
         ),
         turnstile=NoOpTurnstileVerifier(),
         enforce_live_guards=enforce_live_guards,
-        lease_ttl_seconds=600,
-        incident_ttl_seconds=1800,
+        lease_ttl_seconds=240,
+        incident_ttl_seconds=240,
+        approval_timeout_seconds=240,
+        fault_ttl_seconds=300,
         session_cookie_secure=False,
         session_cookie_samesite="lax",
         session_cookie_domain=None,

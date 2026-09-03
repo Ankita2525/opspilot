@@ -4,16 +4,20 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+import threading
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from starlette.requests import Request
 from starlette.responses import Response
 
 SERVICE_NAME = os.environ.get("SANDBOX_SERVICE_NAME", "sandbox-service")
 SERVICE_REVISION = os.environ.get("SANDBOX_INITIAL_REVISION", "v1.0.0")
 CONTROL_TOKEN = os.environ.get("SANDBOX_CONTROL_TOKEN", "sandbox-control-test-token")
+# Dead-man TTL for intentionally activated faults. Independent of OpsPilot.
+DEFAULT_FAULT_TTL_SECONDS = int(os.environ.get("SANDBOX_FAULT_TTL_SECONDS", "300"))
 
 REQUEST_COUNT = Counter(
     "http_requests_total",
@@ -83,7 +87,13 @@ class StructuredLogger:
 
 
 class RevisionState:
-    """Mutable sandbox release state with rollback support."""
+    """Mutable sandbox release state with rollback and self-reverting fault TTL.
+
+    The TTL is owned by the sidecar process. OpsPilot disappearance cannot leave
+    an intentional fault active beyond the bounded window. Explicit rollback
+    cancels the timer. Heartbeat refresh is intentionally not required when
+    approval_timeout < fault_TTL.
+    """
 
     def __init__(
         self,
@@ -92,6 +102,7 @@ class RevisionState:
         healthy_revision: str,
         faulty_revision: str,
         initial_revision: str | None = None,
+        fault_ttl_seconds: int | None = None,
     ) -> None:
         self.service = service
         self.healthy_revision = healthy_revision
@@ -99,6 +110,12 @@ class RevisionState:
         self.current_revision = initial_revision or healthy_revision
         self.previous_revision = healthy_revision
         self.activated_at = datetime.now(UTC)
+        self.fault_ttl_seconds = (
+            fault_ttl_seconds
+            if fault_ttl_seconds is not None
+            else DEFAULT_FAULT_TTL_SECONDS
+        )
+        self.fault_expires_at: datetime | None = None
         self.deployment_history: list[dict[str, Any]] = [
             {
                 "service": service,
@@ -106,52 +123,135 @@ class RevisionState:
                 "timestamp": self.activated_at.isoformat(),
             }
         ]
+        self._lock = threading.RLock()
+        self._ttl_timer: threading.Timer | None = None
+        self._on_auto_revert: Callable[[], None] | None = None
+        self._generation = 0
+
+    def set_auto_revert_callback(self, callback: Callable[[], None] | None) -> None:
+        self._on_auto_revert = callback
 
     @property
     def is_faulty(self) -> bool:
         return self.current_revision == self.faulty_revision
 
-    def activate_faulty(self) -> None:
-        if self.current_revision != self.faulty_revision:
+    def activate_faulty(self, *, ttl_seconds: int | None = None) -> None:
+        with self._lock:
+            if self.current_revision != self.faulty_revision:
+                self.previous_revision = self.current_revision
+                self.current_revision = self.faulty_revision
+                self.activated_at = datetime.now(UTC)
+                self.deployment_history.insert(
+                    0,
+                    {
+                        "service": self.service,
+                        "version": self.faulty_revision,
+                        "timestamp": self.activated_at.isoformat(),
+                    },
+                )
+            ttl = self.fault_ttl_seconds if ttl_seconds is None else max(1, ttl_seconds)
+            self.fault_expires_at = datetime.now(UTC) + timedelta(seconds=ttl)
+            self._arm_timer(ttl)
+
+    def rollback(self, version: str) -> None:
+        with self._lock:
+            if version not in {
+                self.faulty_revision,
+                self.current_revision,
+                self.healthy_revision,
+            }:
+                raise ValueError(f"Unknown deployment version: {version}")
+            self._cancel_timer()
+            self.fault_expires_at = None
+            if self.current_revision == self.healthy_revision:
+                return
             self.previous_revision = self.current_revision
-            self.current_revision = self.faulty_revision
+            self.current_revision = self.healthy_revision
             self.activated_at = datetime.now(UTC)
             self.deployment_history.insert(
                 0,
                 {
                     "service": self.service,
-                    "version": self.faulty_revision,
+                    "version": self.healthy_revision,
                     "timestamp": self.activated_at.isoformat(),
                 },
             )
 
-    def rollback(self, version: str) -> None:
-        if version not in {self.faulty_revision, self.current_revision, self.healthy_revision}:
-            raise ValueError(f"Unknown deployment version: {version}")
-        if self.current_revision == self.healthy_revision:
-            return
-        self.previous_revision = self.current_revision
-        self.current_revision = self.healthy_revision
-        self.activated_at = datetime.now(UTC)
-        self.deployment_history.insert(
-            0,
-            {
-                "service": self.service,
-                "version": self.healthy_revision,
-                "timestamp": self.activated_at.isoformat(),
-            },
-        )
+    def clear_fault(self) -> dict[str, Any]:
+        """Idempotent return to healthy baseline; cancels TTL."""
+        self.rollback(self.healthy_revision)
+        return self.status()
 
     def status(self) -> dict[str, Any]:
-        return {
-            "service": self.service,
-            "current_revision": self.current_revision,
-            "previous_revision": self.previous_revision,
-            "healthy_revision": self.healthy_revision,
-            "faulty_revision": self.faulty_revision,
-            "activated_at": self.activated_at.isoformat(),
-            "is_faulty": self.is_faulty,
-        }
+        with self._lock:
+            return {
+                "service": self.service,
+                "current_revision": self.current_revision,
+                "previous_revision": self.previous_revision,
+                "healthy_revision": self.healthy_revision,
+                "faulty_revision": self.faulty_revision,
+                "activated_at": self.activated_at.isoformat(),
+                "is_faulty": self.is_faulty,
+                "fault_ttl_seconds": self.fault_ttl_seconds,
+                "fault_expires_at": (
+                    self.fault_expires_at.isoformat() if self.fault_expires_at else None
+                ),
+            }
+
+    def _arm_timer(self, ttl_seconds: float) -> None:
+        self._cancel_timer()
+        self._generation += 1
+        generation = self._generation
+
+        def _fire() -> None:
+            self._auto_revert(generation)
+
+        timer = threading.Timer(ttl_seconds, _fire)
+        timer.daemon = True
+        self._ttl_timer = timer
+        timer.start()
+
+    def _cancel_timer(self) -> None:
+        if self._ttl_timer is not None:
+            self._ttl_timer.cancel()
+            self._ttl_timer = None
+        self._generation += 1
+
+    def _auto_revert(self, generation: int) -> None:
+        callback: Callable[[], None] | None = None
+        with self._lock:
+            if generation != self._generation:
+                return
+            if not self.is_faulty:
+                self.fault_expires_at = None
+                return
+            now = datetime.now(UTC)
+            if self.fault_expires_at is not None and now < self.fault_expires_at:
+                remaining = (self.fault_expires_at - now).total_seconds()
+                self._arm_timer(max(remaining, 0.05))
+                return
+            self._cancel_timer()
+            self.fault_expires_at = None
+            self.previous_revision = self.current_revision
+            self.current_revision = self.healthy_revision
+            self.activated_at = now
+            self.deployment_history.insert(
+                0,
+                {
+                    "service": self.service,
+                    "version": self.healthy_revision,
+                    "timestamp": now.isoformat(),
+                    "reason": "fault_ttl_expired",
+                },
+            )
+            callback = self._on_auto_revert
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                logging.getLogger(self.service).exception(
+                    "sandbox auto-revert callback failed"
+                )
 
 
 def verify_control_token(request: Request) -> None:

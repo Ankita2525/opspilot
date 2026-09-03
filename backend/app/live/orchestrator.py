@@ -248,6 +248,14 @@ class LiveIncidentOrchestrator:
         return status
 
     def cleanup(self, session: LiveIncidentSession) -> None:
+        # Explicit rollback is the fast path; sidecar TTL remains the safety net.
+        try:
+            if session.mapping is not None:
+                session.control.clear_fault()
+                session.current_revision = session.mapping.healthy_revision
+        except Exception:
+            # Leave TTL to self-revert; still stop workload/lease below.
+            pass
         session.workload.stop(session.incident_id)
         session.workload.release_lease(
             session.mapping.affected_service,

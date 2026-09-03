@@ -132,12 +132,24 @@ def _update_pool_gauges() -> None:
     ).set(in_use)
 
 
+def _on_fault_auto_revert() -> None:
+    logger._revision = revision_state.current_revision
+    _rebuild_pool()
+    _hold_connections_if_faulty()
+    logger.log(
+        "WARN",
+        f"Fault TTL expired; restored baseline revision {revision_state.current_revision}",
+    )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_otel_logging(SERVICE_NAME)
     _ensure_schema()
     _rebuild_pool()
+    revision_state.set_auto_revert_callback(_on_fault_auto_revert)
     yield
+    revision_state.set_auto_revert_callback(None)
     global _pool
     if _pool is not None:
         _pool.close()
@@ -249,6 +261,17 @@ def rollback(request: Request, body: dict) -> dict:
     _hold_connections_if_faulty()
     logger.log("INFO", f"Rolled back to revision {revision_state.current_revision}")
     return revision_state.status()
+
+
+@app.post("/internal/control/clear-fault")
+def clear_fault(request: Request) -> dict:
+    verify_control_token(request)
+    status = revision_state.clear_fault()
+    logger._revision = revision_state.current_revision
+    _rebuild_pool()
+    _hold_connections_if_faulty()
+    logger.log("INFO", f"Cleared fault; baseline revision {revision_state.current_revision}")
+    return status
 
 
 @app.get("/internal/deployments")

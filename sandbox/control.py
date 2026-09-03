@@ -83,6 +83,23 @@ class SandboxControlClient:
             response.raise_for_status()
             return response.json()
 
+    def clear_fault(self) -> dict[str, Any]:
+        """Idempotent baseline restore (cancels dead-man TTL)."""
+        with httpx.Client(timeout=self._timeout_seconds) as client:
+            response = client.post(
+                f"{self._endpoints.base_url}/internal/control/clear-fault",
+                headers=self._headers(),
+            )
+            if response.status_code == 404:
+                # Older sidecars: fall back to rollback via revision endpoint.
+                revision = self.get_revision()
+                healthy = str(revision.get("healthy_revision") or "")
+                if not healthy:
+                    response.raise_for_status()
+                return self.rollback(healthy)
+            response.raise_for_status()
+            return response.json()
+
     def get_deployments(self) -> list[dict[str, Any]]:
         with httpx.Client(timeout=self._timeout_seconds) as client:
             response = client.get(f"{self._endpoints.base_url}/internal/deployments")

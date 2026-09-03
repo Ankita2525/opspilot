@@ -190,11 +190,17 @@ def test_nested_evidence_references_validate() -> None:
     assert "database connection pool timeout" in evidence[1].summary
 
 
-def test_empty_response_content_raises_runtime_error() -> None:
+def test_empty_response_content_raises_model_call_error() -> None:
+    from backend.app.models.provider_errors import ModelCallError, ProviderErrorCategory
+
     provider, _ = _provider_with_mock(content=None)
 
-    with pytest.raises(RuntimeError, match="empty structured output"):
+    with pytest.raises(ModelCallError) as exc_info:
         provider.generate_structured(SYSTEM_PROMPT, USER_PROMPT, HypothesisResult)
+
+    assert exc_info.value.category is ProviderErrorCategory.EMPTY_RESPONSE
+    assert exc_info.value.consume_quota is True
+    assert exc_info.value.retryable is False
 
 
 def test_no_real_network_request() -> None:

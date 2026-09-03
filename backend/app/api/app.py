@@ -48,8 +48,13 @@ from backend.app.api.public_guard import (
 from backend.app.api.session_store import IncidentSession, IncidentSessionStore
 from backend.app.cleanup.worker import IncidentCleanupWorker
 from backend.app.readiness import assess_readiness
+from backend.app.sandbox.fault_reconcile import (
+    restore_all_sandbox_baselines,
+    safe_expire_stale_leases,
+)
 from backend.app.sandbox.hardening import SandboxHardening, build_sandbox_hardening, list_expired_incidents
 from backend.app.config import DEFAULT_CORS_ORIGINS, OpsPilotSettings
+from backend.app.models.provider_errors import ModelCallError
 from backend.app.observability.metrics import (
     approval_count,
     cleanup_count,
@@ -128,8 +133,9 @@ def create_app(
         runtime.startup()
         app.state.checkpointer = runtime.checkpointer
         runtime.ensure_production_checkpointer_configured()
-        resolved_hardening.lease_store.expire_stale()
         if resolved_hardening.enforce_live_guards:
+            safe_expire_stale_leases(resolved_hardening)
+            _reconcile_stale_incidents_on_startup()
             cleanup_worker = IncidentCleanupWorker(
                 lease_store=resolved_hardening.lease_store,
                 session_store=store,
@@ -141,14 +147,55 @@ def create_app(
                 ),
                 lease_ttl_seconds=resolved_hardening.lease_ttl_seconds,
                 interval_seconds=resolved_hardening.cleanup_interval_seconds,
+                hardening=resolved_hardening,
+                persistence=persistence,
             )
             cleanup_worker.start()
+        else:
+            resolved_hardening.lease_store.expire_stale()
         try:
             yield
         finally:
             if cleanup_worker is not None:
                 await cleanup_worker.stop()
             runtime.shutdown()
+
+    def _reconcile_stale_incidents_on_startup() -> None:
+        """Persistent-state backstop: terminalize stale in_progress + clear faults."""
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        for incident_id, session_id in list_expired_incidents(resolved_repository, now):
+            record = resolved_repository.get_incident(incident_id)
+            scenario_id = record.scenario_id if record is not None else None
+            if scenario_id:
+                from backend.app.sandbox.fault_reconcile import restore_baseline_for_scenario
+
+                restore_baseline_for_scenario(scenario_id)
+            else:
+                restore_all_sandbox_baselines()
+            persistence.record_incident_failed(
+                incident_id=incident_id,
+                reason="timed_out",
+                stage="startup_reconcile",
+            )
+            if session_id:
+                release_global_lease(
+                    hardening=resolved_hardening,
+                    session_id=session_id,
+                    incident_id=incident_id,
+                )
+            in_memory = store.get_optional(incident_id)
+            if in_memory is not None and in_memory.live_session is not None:
+                try:
+                    live_orchestrator.cleanup(in_memory.live_session)
+                except Exception:
+                    pass
+                try:
+                    store.remove(incident_id)
+                except ValueError:
+                    pass
+        safe_expire_stale_leases(resolved_hardening)
 
     app = FastAPI(title="OpsPilot", lifespan=lifespan)
     app.add_middleware(
@@ -291,6 +338,7 @@ def create_app(
                 scenario=scenario,
                 live_session=live_session,
             )
+            persistence.record_start_result(incident_id=incident_id, started=started)
             store.put(
                 incident_id,
                 IncidentSession(
@@ -446,13 +494,13 @@ def create_app(
                 owner_session_id=demo_session.session_id,
                 expires_at=incident_expires_at(resolved_hardening),
             )
-        except Exception:
+        except Exception as exc:
             if live_session is not None:
-                live_orchestrator.cleanup(live_session)
-                release_global_lease(
-                    hardening=resolved_hardening,
-                    session_id=demo_session.session_id,
+                _finalize_failed_live_incident(
                     incident_id=incident_id,
+                    live_session=live_session,
+                    owner_session_id=demo_session.session_id,
+                    exc=exc,
                 )
             raise
         investigation = started.investigation
@@ -531,13 +579,38 @@ def create_app(
                         incident_id=_incident_id,
                     )
                     raise
-            return _begin_incident(
-                loaded,
-                events,
+            try:
+                return _begin_incident(
+                    loaded,
+                    events,
+                    incident_id=_incident_id,
+                    live_session=live_session,
+                    owner_session_id=demo_session.session_id,
+                    expires_at=expires_at,
+                )
+            except Exception as exc:
+                _finalize_failed_live_incident(
+                    incident_id=_incident_id,
+                    live_session=live_session,
+                    owner_session_id=demo_session.session_id,
+                    exc=exc,
+                )
+                raise
+
+        def on_failure(exc: Exception, _incident_id=incident_id) -> None:
+            # Idempotent terminal persistence if begin did not reach finalize.
+            reason = "investigation_failed"
+            stage = "generate_hypothesis"
+            diagnostic = None
+            if isinstance(exc, ModelCallError):
+                reason = exc.meta.public_reason()
+                stage = exc.meta.stage or stage
+                diagnostic = exc.meta.safe_log_dict()
+            persistence.record_incident_failed(
                 incident_id=_incident_id,
-                live_session=live_session,
-                owner_session_id=demo_session.session_id,
-                expires_at=expires_at,
+                reason=reason,
+                stage=stage,
+                diagnostic=diagnostic,
             )
 
         return streamed_incident_response(
@@ -545,7 +618,42 @@ def create_app(
             incident_id=incident_id,
             begin_incident=begin,
             now=now,
+            on_failure=on_failure,
         )
+
+    def _finalize_failed_live_incident(
+        *,
+        incident_id: str,
+        live_session,
+        owner_session_id: str | None,
+        exc: Exception,
+    ) -> None:
+        reason = "investigation_failed"
+        stage = "unknown"
+        diagnostic = None
+        selected_skills = None
+        if isinstance(exc, ModelCallError):
+            reason = exc.meta.public_reason()
+            stage = exc.meta.stage or "generate_hypothesis"
+            diagnostic = exc.meta.safe_log_dict()
+        persistence.record_incident_failed(
+            incident_id=incident_id,
+            reason=reason,
+            stage=stage,
+            selected_skills=selected_skills,
+            diagnostic=diagnostic,
+        )
+        if live_session is not None:
+            try:
+                live_orchestrator.cleanup(live_session)
+            except Exception:
+                pass
+        if owner_session_id is not None and _telemetry_mode() is TelemetryMode.LIVE:
+            release_global_lease(
+                hardening=resolved_hardening,
+                session_id=owner_session_id,
+                incident_id=incident_id,
+            )
 
     @app.post(
         "/api/incidents/{incident_id}/approval",

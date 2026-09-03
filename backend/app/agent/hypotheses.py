@@ -134,11 +134,22 @@ class HypothesisEngine:
             span.set_attribute("opspilot.incident_id", context.incident_id)
             span.set_attribute("opspilot.service", context.affected_service)
             span.set_attribute("opspilot.selected_skills", ",".join(skill_names))
-            result = self._provider.generate_structured(
-                _SYSTEM_PROMPT,
-                user_prompt,
-                HypothesisResult,
-            )
+            generate = self._provider.generate_structured
+            try:
+                result = generate(
+                    _SYSTEM_PROMPT,
+                    user_prompt,
+                    HypothesisResult,
+                    stage="generate_hypothesis",
+                    incident_id=context.incident_id,
+                )
+            except TypeError:
+                # Deterministic / fake providers may not accept stage kwargs.
+                result = generate(
+                    _SYSTEM_PROMPT,
+                    user_prompt,
+                    HypothesisResult,
+                )
             span.set_attribute("opspilot.hypothesis_count", len(result.hypotheses))
             span.set_attribute(
                 "opspilot.recommended_action",

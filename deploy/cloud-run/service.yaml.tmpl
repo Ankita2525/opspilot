@@ -76,6 +76,14 @@ spec:
               value: none
             - name: OPSPILOT_TRUST_PROXY_HEADERS
               value: "true"
+            - name: OPSPILOT_LEASE_TTL_SECONDS
+              value: "240"
+            - name: OPSPILOT_INCIDENT_TTL_SECONDS
+              value: "240"
+            - name: OPSPILOT_APPROVAL_TIMEOUT_SECONDS
+              value: "240"
+            - name: OPSPILOT_FAULT_TTL_SECONDS
+              value: "300"
             - name: OPSPILOT_TURNSTILE_REQUIRED
               value: "true"
             - name: OPSPILOT_TURNSTILE_SITE_KEY
@@ -97,6 +105,8 @@ spec:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
                   key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
+            - name: SANDBOX_FAULT_TTL_SECONDS
+              value: "300"
             - name: OPSPILOT_TURNSTILE_SECRET_KEY
               valueFrom:
                 secretKeyRef:
@@ -142,6 +152,8 @@ spec:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
                   key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
+            - name: SANDBOX_FAULT_TTL_SECONDS
+              value: "300"
           startupProbe:
             httpGet:
               path: /health
@@ -166,6 +178,8 @@ spec:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
                   key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
+            - name: SANDBOX_FAULT_TTL_SECONDS
+              value: "300"
           startupProbe:
             httpGet:
               path: /health
@@ -192,6 +206,8 @@ spec:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
                   key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
+            - name: SANDBOX_FAULT_TTL_SECONDS
+              value: "300"
           startupProbe:
             httpGet:
               path: /health
@@ -216,6 +232,8 @@ spec:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
                   key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
+            - name: SANDBOX_FAULT_TTL_SECONDS
+              value: "300"
           startupProbe:
             httpGet:
               path: /health
