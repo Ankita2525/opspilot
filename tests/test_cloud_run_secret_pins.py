@@ -21,7 +21,7 @@ EXPECTED_PRODUCTION_PINS = {
     "OPSPILOT_GROQ_SECRET_VERSION": "1",
     "OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION": "2",
     "OPSPILOT_TURNSTILE_SECRET_VERSION": "1",
-    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION": "1",
+    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION": "2",
     "OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION": "1",
 }
 
@@ -116,7 +116,7 @@ def test_rendered_non_database_pins_match_example() -> None:
         "opspilot-groq-api-key": "1",
         "opspilot-sandbox-control-token": "2",
         "opspilot-turnstile-secret": "1",
-        "opspilot-grafana-loki-authorization": "1",
+        "opspilot-grafana-loki-authorization": "2",
         "opspilot-prometheus-config": "1",
     }
     for _where, name, key in refs:
@@ -200,7 +200,7 @@ def test_pin_preflight_checks_enabled_and_db(tmp_path: Path) -> None:
         ("opspilot-groq-api-key", "1"): "ENABLED",
         ("opspilot-sandbox-control-token", "2"): "ENABLED",
         ("opspilot-turnstile-secret", "1"): "ENABLED",
-        ("opspilot-grafana-loki-authorization", "1"): "ENABLED",
+        ("opspilot-grafana-loki-authorization", "2"): "ENABLED",
         ("opspilot-prometheus-config", "1"): "ENABLED",
     }
 
