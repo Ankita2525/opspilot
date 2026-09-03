@@ -62,13 +62,31 @@ uv run python deploy/cloud-run/preflight_secret_pins.py \
   --vars-file=deploy/cloud-run/render.vars
 ```
 
-**B. Probe-replay (revision 00003 class): `/healthz` isolated, `/ready` degrades**
+**B. Header-bound secret hygiene (sandbox token + Grafana Authorization)**
+
+Rejects CR/LF, surrounding whitespace, empty values, and malformed `Basic` auth.
+
+```bash
+uv run python deploy/cloud-run/preflight_header_secrets.py \
+  --project=opspilot-live-lab \
+  --vars-file=deploy/cloud-run/render.vars
+```
+
+**C. Grafana Cloud Loki auth/query (`GET /loki/api/v1/labels`)**
+
+```bash
+uv run python deploy/cloud-run/preflight_loki.py \
+  --project=opspilot-live-lab \
+  --vars-file=deploy/cloud-run/render.vars
+```
+
+**D. Probe-replay (revision 00003 class): `/health` isolated, `/ready` degrades**
 
 ```bash
 uv run python deploy/cloud-run/preflight_probe_replay.py
 ```
 
-**C. Cloud Run render/profile + DB + secret-pin + probe-replay unit tests**
+**E. Cloud Run render/profile + DB + secret-pin + probe-replay unit tests**
 
 ```bash
 uv run pytest -q \
@@ -76,10 +94,11 @@ uv run pytest -q \
   tests/test_cloud_run_render.py \
   tests/test_cloud_run_db_preflight.py \
   tests/test_cloud_run_secret_pins.py \
-  tests/test_cloud_run_probe_replay.py
+  tests/test_cloud_run_probe_replay.py \
+  tests/test_header_secret_hygiene.py
 ```
 
-**D. Render with an immutable image tag and pinned secret versions**
+**F. Render with an immutable image tag and pinned secret versions**
 
 ```bash
 python deploy/cloud-run/render_service.py \
@@ -89,7 +108,7 @@ python deploy/cloud-run/render_service.py \
   --vars-file deploy/cloud-run/render.vars
 ```
 
-**E. Cloud Run server-side validation (dry-run only)**
+**G. Cloud Run server-side validation (dry-run only)**
 
 ```bash
 gcloud run services replace \
@@ -103,30 +122,24 @@ gcloud run services replace \
 
 | Endpoint | Role | Cloud Run probe? |
 |----------|------|------------------|
-| `GET /healthz` | Process-local: FastAPI accepts HTTP. **No** DB/HTTP/Loki/Prometheus/lease I/O. | **Yes** — startup + liveness |
-| `GET /health` | Legacy public health (`status` + `service`). | No |
-| `GET /ready` | Deep diagnostic dependency health (async, cached, degraded-tolerant). | **No** |
+| `GET /health` | Process-local: FastAPI accepts HTTP. **No** DB/HTTP/Loki/Prometheus/lease I/O. | **Yes** — startup + liveness |
+| `GET /healthz` | Internal alias only. **Do not** use publicly: Google Frontend intercepted exact `/healthz` with HTML 404 (rev `00004` evidence). | No |
+| `GET /ready` | Deep diagnostic dependency health (async, cached, degraded-tolerant). Loki uses authenticated `/loki/api/v1/labels`. | **No** |
 
 Revision annotation `run.googleapis.com/startup-cpu-boost: "true"` is enabled while
 preserving `minScale=0`, `maxScale=1`, and `cpu-throttling=true`.
 
-### Canary deploy plan (do not skip)
+### Canary deploy plan (required while `00004-zws` is healthy)
 
-`gcloud run services replace` has **no** `--no-traffic` flag. Use traffic pinning + tags.
-
-When a healthy serving revision already exists:
+`gcloud run services replace` has **no** `--no-traffic` flag. Pin traffic first.
 
 ```bash
-# 1) Pin 100% traffic to the current healthy revision (not LATEST)
-CURRENT=$(gcloud run services describe opspilot-live-lab \
-  --project=opspilot-live-lab --region=us-central1 \
-  --format='value(status.traffic[0].revisionName)')
-
+# 1) Explicitly pin 100% traffic to the known-healthy revision
 gcloud run services update-traffic opspilot-live-lab \
   --project=opspilot-live-lab --region=us-central1 \
-  --to-revisions="${CURRENT}=100"
+  --to-revisions=opspilot-live-lab-00004-zws=100
 
-# 2) Replace creates a new LATEST revision with 0% traffic while CURRENT stays at 100%
+# 2) Replace creates a new LATEST revision; traffic stays on 00004 while pinned
 gcloud run services replace deploy/cloud-run/rendered/service.yaml \
   --project=opspilot-live-lab --region=us-central1
 
@@ -139,22 +152,26 @@ gcloud run services update-traffic opspilot-live-lab \
   --project=opspilot-live-lab --region=us-central1 \
   --update-tags=canary=LATEST
 
-# 5) Smoke the tagged URL only:
-#    https://canary---opspilot-live-lab-<hash>-uc.a.run.app/healthz
-#    https://canary---.../ready
+# 5) Smoke ONLY the tagged URL (/health, /ready, runtime, sandbox, live incident):
+#    https://canary---opspilot-live-lab-<hash>-uc.a.run.app/health
 
-# 6) Promote only after smoke passes
+# 6) Promote only after canary smoke passes
 gcloud run services update-traffic opspilot-live-lab \
   --project=opspilot-live-lab --region=us-central1 \
   --to-latest --clear-tags
+
+# 7) After promotion + cold-start verification, disable obsolete sandbox token v1:
+#    gcloud secrets versions disable 1 \
+#      --secret=opspilot-sandbox-control-token \
+#      --project=opspilot-live-lab
 ```
 
-When **no** healthy revision exists (current lab after failed startups), step 1 cannot
-pin traffic. In that case `services replace` is required to obtain the first Ready
-revision; smoke `/healthz` + `/ready` on the service URL immediately after Ready=True,
-then keep traffic on that revision before further replaces.
+When **no** healthy revision exists, step 1 cannot pin traffic. In that case
+`services replace` is required to obtain the first Ready revision; smoke `/health`
++ `/ready` on the service URL immediately after Ready=True, then keep traffic on
+that revision before further replaces.
 
-Real replace (only after A–E pass, and only when explicitly requested):
+Real replace (only after A–G pass, and only when explicitly requested):
 
 ```bash
 gcloud run services replace \
@@ -256,7 +273,9 @@ python scripts/validate_cloud_run_local.py
 | `render_service.py` | Substitute project/region/tag + deploy-time vars + secret version pins |
 | `preflight_database.py` | Parse `DATABASE_URL` with libpq and run `SELECT 1` (no secret output) |
 | `preflight_secret_pins.py` | Confirm pinned versions are ENABLED; DB pin parse/connect/`SELECT 1` |
-| `preflight_probe_replay.py` | `/healthz` isolation + `/ready` degradation + event-loop responsiveness |
+| `preflight_header_secrets.py` | Header-bound secret hygiene (no CR/LF/whitespace) |
+| `preflight_loki.py` | Grafana Cloud Loki Authorization + `/labels` auth/query |
+| `preflight_probe_replay.py` | `/health` isolation + `/ready` degradation + event-loop responsiveness |
 | `render.vars.example` | Non-secret deploy-time values + explicit secret version pins |
 | `prometheus.yml` | Localhost scrape targets (uploaded to Secret Manager) |
 | `otel-collector.yaml` | Source for embedded OTEL config (not stored in Secret Manager) |

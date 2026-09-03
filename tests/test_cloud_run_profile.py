@@ -145,22 +145,25 @@ def test_ingress_binds_all_interfaces_not_localhost() -> None:
     assert "PORT" not in env_names
 
 
-def test_opspilot_lifecycle_probes_use_healthz() -> None:
+def test_opspilot_lifecycle_probes_use_health() -> None:
     containers = _service_spec()["spec"]["template"]["spec"]["containers"]
     opspilot = next(c for c in containers if c["name"] == "opspilot")
-    assert opspilot["startupProbe"]["httpGet"]["path"] == "/healthz"
+    assert opspilot["startupProbe"]["httpGet"]["path"] == "/health"
     assert opspilot["startupProbe"]["httpGet"]["port"] == 8000
     assert opspilot["startupProbe"]["timeoutSeconds"] == 2
     assert opspilot["startupProbe"]["failureThreshold"] == 24
-    assert opspilot["livenessProbe"]["httpGet"]["path"] == "/healthz"
+    assert opspilot["livenessProbe"]["httpGet"]["path"] == "/health"
     assert opspilot["livenessProbe"]["httpGet"]["port"] == 8000
 
 
-def test_opspilot_startup_probe_does_not_use_ready() -> None:
+def test_opspilot_startup_probe_does_not_use_ready_or_healthz() -> None:
+    """Public /healthz is intercepted by Google Frontend; /ready is deep diagnostic."""
     containers = _service_spec()["spec"]["template"]["spec"]["containers"]
     opspilot = next(c for c in containers if c["name"] == "opspilot")
-    assert opspilot["startupProbe"]["httpGet"]["path"] != "/ready"
-    assert opspilot["livenessProbe"]["httpGet"]["path"] != "/ready"
+    assert opspilot["startupProbe"]["httpGet"]["path"] not in {"/ready", "/healthz"}
+    assert opspilot["livenessProbe"]["httpGet"]["path"] not in {"/ready", "/healthz"}
+    text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "Google Frontend" in text or "healthz" in text.lower()
 
 
 def test_sidecar_startup_probes_configured() -> None:
@@ -173,7 +176,7 @@ def test_sidecar_startup_probes_configured() -> None:
 def test_http_probes_do_not_set_host() -> None:
     containers = _service_spec()["spec"]["template"]["spec"]["containers"]
     expected_startup_probes = {
-        "opspilot": {"path": "/healthz", "port": 8000},
+        "opspilot": {"path": "/health", "port": 8000},
         "checkout-api": {"path": "/health", "port": 8081},
         "auth-service": {"path": "/health", "port": 8082},
         "payments-service": {"path": "/health", "port": 8083},

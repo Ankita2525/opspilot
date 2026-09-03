@@ -102,17 +102,20 @@ spec:
                 secretKeyRef:
                   name: opspilot-turnstile-secret
                   key: "{{OPSPILOT_TURNSTILE_SECRET_VERSION}}"
-          # Lifecycle probes must stay process-local (/healthz). Deep /ready is diagnostic only.
+          # Lifecycle probes must stay process-local (/health). Deep /ready is diagnostic only.
+          # Do not use exact path /healthz: Google Frontend intercepts public /healthz with HTML 404
+          # before the request reaches the container (rev 00004 evidence). Internal probes can still
+          # hit /healthz, but public/frontend checks must use /health.
           startupProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8000
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 24
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8000
             periodSeconds: 30
             timeoutSeconds: 2

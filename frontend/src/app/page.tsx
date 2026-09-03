@@ -17,7 +17,7 @@ import { ScenarioCard } from "@/components/ScenarioCard";
 import { ServiceTopology } from "@/components/ServiceTopology";
 import { TelemetryBands } from "@/components/TelemetryBands";
 import {
-  getHealthz,
+  getHealth,
   getIncidentProvenance,
   getRuntimeSummary,
   getSandboxStatus,
@@ -107,9 +107,10 @@ export default function Home() {
       const maxAttempts = 20;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-          // Prefer process-local health during Cloud Run cold start; tolerate
+          // Prefer process-local /health during Cloud Run cold start; tolerate
           // temporary deep /ready degradation without inventing telemetry.
-          await getHealthz();
+          // Do not call /healthz: public GFE intercepts that exact path.
+          await getHealth();
           const [loaded, runtime, status] = await Promise.all([
             getScenarios(),
             getRuntimeSummary().catch(() => null),

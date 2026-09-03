@@ -224,18 +224,13 @@ async def _run_checks(
             if settings.prometheus_url
             else None
         )
-        loki_url = (
-            f"{settings.loki_url.rstrip('/')}/loki/api/v1/status/buildinfo"
-            if settings.loki_url
-            else None
-        )
         tasks["live_sandbox"] = asyncio.create_task(
             _check_http(checkout_url, label="checkout_health")
         )
         tasks["prometheus"] = asyncio.create_task(
             _check_http(prometheus_url, label="prometheus_ready")
         )
-        tasks["loki"] = asyncio.create_task(_check_http(loki_url, label="loki_buildinfo"))
+        tasks["loki"] = asyncio.create_task(_check_loki(settings.loki_url))
     else:
         tasks["live_sandbox"] = asyncio.create_task(
             _immediate(CheckResult(ok=True, latency_ms=None, detail="not_required"))
@@ -361,6 +356,37 @@ async def _check_http(url: str | None, *, label: str) -> CheckResult:
         latency_ms = round((time.perf_counter() - started) * 1000, 1)
         if 200 <= response.status_code < 300:
             return CheckResult(ok=True, latency_ms=latency_ms, detail="ready")
+        return CheckResult(ok=False, latency_ms=latency_ms, detail="degraded")
+    except httpx.TimeoutException:
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        return CheckResult(ok=False, latency_ms=latency_ms, detail="timeout")
+    except Exception:
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        return CheckResult(ok=False, latency_ms=latency_ms, detail="unavailable")
+
+
+async def _check_loki(loki_base_url: str | None) -> CheckResult:
+    """Grafana Cloud Loki readiness via authenticated data API (/labels).
+
+    Hosted Grafana Cloud does not expose upstream `/status/buildinfo` usefully.
+    Failures stay degraded (never a Cloud Run lifecycle probe).
+    """
+    if not loki_base_url:
+        return CheckResult(ok=False, latency_ms=None, detail="not_configured")
+    authorization = (os.environ.get("OPSPILOT_LOKI_AUTHORIZATION") or "").strip()
+    if not authorization:
+        return CheckResult(ok=False, latency_ms=None, detail="not_configured")
+    url = f"{loki_base_url.rstrip('/')}/loki/api/v1/labels"
+    headers = {"Authorization": authorization}
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client:
+            response = await client.get(url, headers=headers)
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        if 200 <= response.status_code < 300:
+            return CheckResult(ok=True, latency_ms=latency_ms, detail="ready")
+        if response.status_code in {401, 403}:
+            return CheckResult(ok=False, latency_ms=latency_ms, detail="unavailable")
         return CheckResult(ok=False, latency_ms=latency_ms, detail="degraded")
     except httpx.TimeoutException:
         latency_ms = round((time.perf_counter() - started) * 1000, 1)

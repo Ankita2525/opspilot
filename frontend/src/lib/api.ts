@@ -108,8 +108,15 @@ export function getRuntimeSummary(): Promise<RuntimeSummary> {
   return request<RuntimeSummary>("/api/runtime");
 }
 
-export function getHealthz(): Promise<{ status: string }> {
-  return request<{ status: string }>("/healthz");
+export function getHealth(): Promise<{ status: string; service?: string }> {
+  // Prefer /health over /healthz: Google Frontend intercepts public /healthz
+  // with an HTML 404 before the request reaches Cloud Run containers.
+  return request<{ status: string; service?: string }>("/health");
+}
+
+/** @deprecated Use getHealth(); kept name briefly for call-site clarity in cold-start. */
+export function getHealthz(): Promise<{ status: string; service?: string }> {
+  return getHealth();
 }
 
 export function getReadiness(): Promise<{

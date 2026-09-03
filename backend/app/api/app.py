@@ -353,11 +353,21 @@ def create_app(
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
+        """Process-local probe target for Cloud Run + public warm-up.
+
+        No DB, HTTP, Loki, Prometheus, model, or lease I/O. Prefer this over
+        exact `/healthz`, which Google Frontend may intercept publicly.
+        """
         return HealthResponse(status="ok", service="opspilot")
 
     @app.get("/healthz", response_model=HealthzResponse)
     def healthz() -> HealthzResponse:
-        """Process-safe probe target: no DB, HTTP, Loki, Prometheus, or lease I/O."""
+        """Internal alias of process-local health. Do not use for public checks.
+
+        Exact path `/healthz` is intercepted by Google Frontend on this Cloud Run
+        service (public HTML 404; request never reaches the container). Kept only
+        as a low-churn alias for any leftover internal callers.
+        """
         return HealthzResponse(status="ok")
 
     @app.get("/ready", response_model=ReadyResponse)
