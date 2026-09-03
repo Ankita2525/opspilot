@@ -26,7 +26,7 @@ def _live_settings_unroutable() -> OpsPilotSettings:
             "OPSPILOT_TELEMETRY_MODE": "live",
             # Unroutable / closed ports — dependency failures without real egress.
             # Intentionally no DATABASE_URL: app lifespan must still start; DB
-            # preflight remains the deploy-time gate, not /healthz.
+            # preflight remains the deploy-time gate, not /health.
             "OPSPILOT_PROMETHEUS_URL": "http://127.0.0.1:9",
             "OPSPILOT_LOKI_URL": "http://127.0.0.1:9",
             "SANDBOX_CONTROL_TOKEN": "probe-replay-token",
@@ -49,12 +49,13 @@ def test_readiness_module_has_no_blocking_urllib_or_requests() -> None:
     assert "requests." not in source
     assert "import requests" not in source
     assert "httpx" in source
+    assert "/loki/api/v1/labels" in source
     assert inspect.iscoroutinefunction(
         __import__("backend.app.readiness", fromlist=["assess_readiness"]).assess_readiness
     )
 
 
-def test_healthz_isolated_from_dependency_failures() -> None:
+def test_health_isolated_from_dependency_failures() -> None:
     async def _run() -> None:
         app = create_app(provider=FakeModelProvider(), settings=_live_settings_unroutable())
         transport = ASGITransport(app=app)
@@ -62,13 +63,13 @@ def test_healthz_isolated_from_dependency_failures() -> None:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             for _ in range(20):
                 started = time.perf_counter()
-                response = await asyncio.wait_for(client.get("/healthz"), timeout=1.0)
+                response = await asyncio.wait_for(client.get("/health"), timeout=1.0)
                 latencies.append((time.perf_counter() - started) * 1000)
                 assert response.status_code == 200
-                assert response.json() == {"status": "ok"}
+                assert response.json()["status"] == "ok"
         ordered = sorted(latencies)
         p95 = ordered[max(0, int(len(ordered) * 0.95) - 1)]
-        assert p95 < 500.0, f"healthz p95={p95:.1f}ms latencies={ordered}"
+        assert p95 < 500.0, f"health p95={p95:.1f}ms latencies={ordered}"
 
     asyncio.run(_run())
 
@@ -94,7 +95,7 @@ def test_ready_degrades_without_hanging() -> None:
     asyncio.run(_run())
 
 
-def test_concurrent_ready_does_not_starve_healthz() -> None:
+def test_concurrent_ready_does_not_starve_health() -> None:
     async def _run() -> None:
         app = create_app(provider=FakeModelProvider(), settings=_live_settings_unroutable())
         transport = ASGITransport(app=app)
@@ -108,7 +109,7 @@ def test_concurrent_ready_does_not_starve_healthz() -> None:
             health_latencies: list[float] = []
             for _ in range(8):
                 started = time.perf_counter()
-                response = await client.get("/healthz")
+                response = await client.get("/health")
                 health_latencies.append((time.perf_counter() - started) * 1000)
                 assert response.status_code == 200
                 assert response.json()["status"] == "ok"

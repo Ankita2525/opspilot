@@ -337,11 +337,12 @@ def test_loki_client_sends_authorization_header() -> None:
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"version": "2.9.0"}
+    mock_response.json.return_value = {"status": "success", "data": ["service_name"]}
 
     captured: dict[str, object] = {}
 
     def fake_get(url: str, **kwargs: object) -> MagicMock:
+        captured["url"] = url
         captured["headers"] = kwargs.get("headers")
         return mock_response
 
@@ -353,6 +354,7 @@ def test_loki_client_sends_authorization_header() -> None:
         assert client.is_api_ready()
 
     assert captured["headers"] == {"Authorization": "Basic ZmFrZTpwYXNz"}
+    assert captured["url"] == "https://logs.example.net/loki/api/v1/labels"
 
 
 def _docker_pull_otel_image() -> None:

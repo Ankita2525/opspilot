@@ -19,9 +19,9 @@ TEMPLATE_PATH = CLOUD_RUN_DIR / "service.yaml.tmpl"
 EXPECTED_PRODUCTION_PINS = {
     "OPSPILOT_DATABASE_SECRET_VERSION": "2",
     "OPSPILOT_GROQ_SECRET_VERSION": "1",
-    "OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION": "1",
+    "OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION": "2",
     "OPSPILOT_TURNSTILE_SECRET_VERSION": "1",
-    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION": "1",
+    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION": "2",
     "OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION": "1",
 }
 
@@ -110,13 +110,13 @@ def test_rendered_database_pin_is_version_2() -> None:
     assert set(db_refs) == {"2"}
 
 
-def test_rendered_non_database_pins_are_version_1() -> None:
+def test_rendered_non_database_pins_match_example() -> None:
     refs = _all_secret_refs(_rendered_spec())
     expected = {
         "opspilot-groq-api-key": "1",
-        "opspilot-sandbox-control-token": "1",
+        "opspilot-sandbox-control-token": "2",
         "opspilot-turnstile-secret": "1",
-        "opspilot-grafana-loki-authorization": "1",
+        "opspilot-grafana-loki-authorization": "2",
         "opspilot-prometheus-config": "1",
     }
     for _where, name, key in refs:
@@ -198,9 +198,9 @@ def test_pin_preflight_checks_enabled_and_db(tmp_path: Path) -> None:
     states = {
         ("opspilot-database-url", "2"): "ENABLED",
         ("opspilot-groq-api-key", "1"): "ENABLED",
-        ("opspilot-sandbox-control-token", "1"): "ENABLED",
+        ("opspilot-sandbox-control-token", "2"): "ENABLED",
         ("opspilot-turnstile-secret", "1"): "ENABLED",
-        ("opspilot-grafana-loki-authorization", "1"): "ENABLED",
+        ("opspilot-grafana-loki-authorization", "2"): "ENABLED",
         ("opspilot-prometheus-config", "1"): "ENABLED",
     }
 

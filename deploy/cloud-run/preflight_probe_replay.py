@@ -2,10 +2,11 @@
 """Pre-deploy probe-replay gate for Cloud Run lifecycle vs deep readiness.
 
 Catches the revision 00003 failure class:
-  Cloud Run startupProbe must hit process-local /healthz, not deep /ready.
-  /ready must degrade under dependency failures without hanging or starving /healthz.
+  Cloud Run startupProbe must hit process-local /health, not deep /ready.
+  /ready must degrade under dependency failures without hanging or starving /health.
 
-This script is intentionally runnable without Neon/Grafana/Prometheus.
+Exact path /healthz is intentionally not used for public/lifecycle checks:
+Google Frontend intercepted public /healthz with HTML 404 (rev 00004 evidence).
 
 Exit 0 on success.
 """
@@ -60,14 +61,14 @@ async def _run() -> None:
         health_latencies: list[float] = []
         for _ in range(25):
             started = time.perf_counter()
-            response = await asyncio.wait_for(client.get("/healthz"), timeout=1.0)
+            response = await asyncio.wait_for(client.get("/health"), timeout=1.0)
             health_latencies.append((time.perf_counter() - started) * 1000)
-            if response.status_code != 200 or response.json() != {"status": "ok"}:
-                raise SystemExit(f"/healthz failed: {response.status_code} {response.text}")
+            if response.status_code != 200 or response.json().get("status") != "ok":
+                raise SystemExit(f"/health failed: {response.status_code} {response.text}")
 
         health_p95 = _p95(health_latencies)
         if health_p95 >= 500.0:
-            raise SystemExit(f"/healthz p95 too high: {health_p95:.1f}ms")
+            raise SystemExit(f"/health p95 too high: {health_p95:.1f}ms")
 
         started = time.perf_counter()
         ready = await asyncio.wait_for(client.get("/ready"), timeout=6.0)
@@ -85,19 +86,19 @@ async def _run() -> None:
         concurrent_health: list[float] = []
         for _ in range(10):
             started = time.perf_counter()
-            response = await client.get("/healthz")
+            response = await client.get("/health")
             concurrent_health.append((time.perf_counter() - started) * 1000)
             if response.status_code != 200:
-                raise SystemExit("/healthz failed under concurrent /ready")
+                raise SystemExit("/health failed under concurrent /ready")
         await asyncio.gather(*ready_tasks)
         max_health = max(concurrent_health)
         if max_health >= 200.0:
-            raise SystemExit(f"/healthz starved under /ready load: max={max_health:.1f}ms")
+            raise SystemExit(f"/health starved under /ready load: max={max_health:.1f}ms")
 
     print("probe_replay_ok")
-    print(f"healthz_p95_ms={health_p95:.1f}")
+    print(f"health_p95_ms={health_p95:.1f}")
     print(f"ready_degraded_s={ready_elapsed:.2f}")
-    print(f"healthz_under_load_max_ms={max_health:.1f}")
+    print(f"health_under_load_max_ms={max_health:.1f}")
 
 
 def main() -> int:

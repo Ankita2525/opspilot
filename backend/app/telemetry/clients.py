@@ -131,9 +131,12 @@ class LokiConfig:
 
 def loki_config_from_environ(environ: Mapping[str, str] | None = None) -> LokiConfig:
     env = environ if environ is not None else os.environ
+    authorization = _optional_env(env.get("OPSPILOT_LOKI_AUTHORIZATION"))
+    if authorization is not None:
+        authorization = authorization.strip() or None
     return LokiConfig(
         base_url=env.get("OPSPILOT_LOKI_URL", "http://localhost:3100"),
-        authorization=_optional_env(env.get("OPSPILOT_LOKI_AUTHORIZATION")),
+        authorization=authorization,
     )
 
 
@@ -149,14 +152,16 @@ class LokiClient:
         self._config = config
 
     def is_api_ready(self) -> bool:
+        # Grafana Cloud Loki: prefer authenticated /labels over /status/buildinfo
+        # (hosted buildinfo is not a reliable readiness signal).
         with httpx.Client(timeout=self._config.timeout_seconds) as client:
             response = client.get(
-                f"{self._config.base_url.rstrip('/')}/loki/api/v1/status/buildinfo",
+                f"{self._config.base_url.rstrip('/')}/loki/api/v1/labels",
                 headers=self._config.request_headers(),
             )
             response.raise_for_status()
             payload = response.json()
-        return bool(payload.get("version"))
+        return payload.get("status") == "success" or isinstance(payload.get("data"), list)
 
     def wait_until_ready(
         self,

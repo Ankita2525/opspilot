@@ -45,6 +45,8 @@ class SandboxControlClient:
             "SANDBOX_CONTROL_TOKEN",
             "sandbox-control-test-token",
         )
+        # Secret Manager / shell piping can introduce trailing newlines; HTTP headers forbid them.
+        token = token.strip()
         return cls(
             SandboxServiceEndpoints(
                 service=mapping.affected_service,
@@ -54,7 +56,7 @@ class SandboxControlClient:
         )
 
     def _headers(self) -> dict[str, str]:
-        return {"X-Sandbox-Control-Token": self._endpoints.control_token}
+        return {"X-Sandbox-Control-Token": self._endpoints.control_token.strip()}
 
     def get_revision(self) -> dict[str, Any]:
         with httpx.Client(timeout=self._timeout_seconds) as client:
