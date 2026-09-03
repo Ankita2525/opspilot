@@ -123,6 +123,36 @@ def test_sidecar_startup_probes_configured() -> None:
         assert "startupProbe" in container
 
 
+def test_http_probes_do_not_set_host() -> None:
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    expected_startup_probes = {
+        "opspilot": {"path": "/ready", "port": 8000},
+        "checkout-api": {"path": "/health", "port": 8081},
+        "auth-service": {"path": "/health", "port": 8082},
+        "payments-service": {"path": "/health", "port": 8083},
+        "provider-service": {"path": "/health", "port": 8084},
+        "prometheus": {"path": "/-/ready", "port": 9090},
+    }
+    for container in containers:
+        for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
+            probe = container.get(probe_name)
+            if probe is None:
+                continue
+            http_get = probe.get("httpGet", {})
+            assert "host" not in http_get, (
+                f"{container['name']} {probe_name} must not set httpGet.host"
+            )
+        startup = container.get("startupProbe")
+        if startup is None:
+            continue
+        expected = expected_startup_probes.get(container["name"])
+        if expected is None:
+            continue
+        http_get = startup["httpGet"]
+        assert http_get["path"] == expected["path"]
+        assert http_get["port"] == expected["port"]
+
+
 def test_container_dependencies_annotation_present() -> None:
     annotations = _service_spec()["metadata"]["annotations"]
     assert "run.googleapis.com/container-dependencies" in annotations
