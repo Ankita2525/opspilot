@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from unittest.mock import MagicMock, patch
@@ -205,15 +206,16 @@ def test_lease_renewal_extends_active_lease() -> None:
     assert store.renew(session_id="s2", incident_id="i2", ttl_seconds=600) is False
 
 
-def test_readiness_unready_when_prometheus_unavailable() -> None:
+def test_readiness_degraded_when_prometheus_unavailable() -> None:
     settings = OpsPilotSettings.from_env(
         {
             "OPSPILOT_ENV": "test",
             "OPSPILOT_MODEL_PROVIDER": "deterministic",
             "OPSPILOT_TELEMETRY_MODE": "live",
-            "OPSPILOT_PROMETHEUS_URL": "http://prometheus:9090",
-            "OPSPILOT_LOKI_URL": "http://loki:3100",
+            "OPSPILOT_PROMETHEUS_URL": "http://127.0.0.1:9",
+            "OPSPILOT_LOKI_URL": "http://127.0.0.1:9",
             "SANDBOX_CONTROL_TOKEN": "test-token",
+            "CHECKOUT_API_URL": "http://127.0.0.1:9",
         }
     )
     runtime = RuntimeResources(
@@ -236,14 +238,18 @@ def test_readiness_unready_when_prometheus_unavailable() -> None:
         cleanup_interval_seconds=30.0,
     )
 
-    def _check(url: str | None, path: str = "") -> str:
-        if path == "/-/ready":
-            return "unavailable"
-        return "ready"
+    async def _fake_http(url: str | None, *, label: str):
+        from backend.app.readiness import CheckResult
 
-    with patch("backend.app.readiness._check_url", side_effect=_check):
-        report = assess_readiness(runtime, hardening)
-    assert report.status == "unready"
+        del label
+        if url and "/-/ready" in url:
+            return CheckResult(ok=False, latency_ms=1.0, detail="unavailable")
+        return CheckResult(ok=True, latency_ms=1.0, detail="ready")
+
+    with patch("backend.app.readiness._check_http", side_effect=_fake_http):
+        report = asyncio.run(assess_readiness(runtime, hardening, use_cache=False))
+    assert report.status == "degraded"
+    assert report.degraded is True
     assert report.prometheus == "unavailable"
 
 

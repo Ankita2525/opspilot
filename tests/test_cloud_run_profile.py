@@ -92,6 +92,15 @@ def test_request_based_billing_cpu_throttling_enabled() -> None:
     assert annotations["autoscaling.knative.dev/maxScale"] == "1"
 
 
+def test_startup_cpu_boost_with_scale_and_throttling() -> None:
+    """Cold-start boost must coexist with min=0/max=1 request-based billing."""
+    annotations = _service_spec()["spec"]["template"]["metadata"]["annotations"]
+    assert annotations["run.googleapis.com/startup-cpu-boost"] == "true"
+    assert annotations["run.googleapis.com/cpu-throttling"] == "true"
+    assert annotations["autoscaling.knative.dev/minScale"] == "0"
+    assert annotations["autoscaling.knative.dev/maxScale"] == "1"
+
+
 def test_prometheus_scrapes_localhost_sidecars() -> None:
     text = PROMETHEUS_YML.read_text()
     for port in ("8081", "8082", "8083", "8084"):
@@ -136,10 +145,22 @@ def test_ingress_binds_all_interfaces_not_localhost() -> None:
     assert "PORT" not in env_names
 
 
-def test_opspilot_startup_probe_uses_ready_not_health_only() -> None:
+def test_opspilot_lifecycle_probes_use_healthz() -> None:
     containers = _service_spec()["spec"]["template"]["spec"]["containers"]
     opspilot = next(c for c in containers if c["name"] == "opspilot")
-    assert opspilot["startupProbe"]["httpGet"]["path"] == "/ready"
+    assert opspilot["startupProbe"]["httpGet"]["path"] == "/healthz"
+    assert opspilot["startupProbe"]["httpGet"]["port"] == 8000
+    assert opspilot["startupProbe"]["timeoutSeconds"] == 2
+    assert opspilot["startupProbe"]["failureThreshold"] == 24
+    assert opspilot["livenessProbe"]["httpGet"]["path"] == "/healthz"
+    assert opspilot["livenessProbe"]["httpGet"]["port"] == 8000
+
+
+def test_opspilot_startup_probe_does_not_use_ready() -> None:
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    opspilot = next(c for c in containers if c["name"] == "opspilot")
+    assert opspilot["startupProbe"]["httpGet"]["path"] != "/ready"
+    assert opspilot["livenessProbe"]["httpGet"]["path"] != "/ready"
 
 
 def test_sidecar_startup_probes_configured() -> None:
@@ -152,7 +173,7 @@ def test_sidecar_startup_probes_configured() -> None:
 def test_http_probes_do_not_set_host() -> None:
     containers = _service_spec()["spec"]["template"]["spec"]["containers"]
     expected_startup_probes = {
-        "opspilot": {"path": "/ready", "port": 8000},
+        "opspilot": {"path": "/healthz", "port": 8000},
         "checkout-api": {"path": "/health", "port": 8081},
         "auth-service": {"path": "/health", "port": 8082},
         "payments-service": {"path": "/health", "port": 8083},

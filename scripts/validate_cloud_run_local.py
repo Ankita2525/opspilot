@@ -48,13 +48,20 @@ def wait_ready(client: httpx.Client, timeout: float = 180.0) -> dict[str, Any]:
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         try:
+            healthz = client.get(f"{API_BASE}/healthz", timeout=2.0)
+            if healthz.status_code != 200:
+                time.sleep(3.0)
+                continue
             response = client.get(f"{API_BASE}/ready", timeout=10.0)
             if response.status_code == 200:
                 payload = response.json()
                 last = payload
-                if payload.get("status") in {"ready", "degraded"}:
-                    if payload.get("live_sandbox") == "ready":
-                        return payload
+                live_ok = payload.get("live_sandbox") == "ready"
+                checks = payload.get("checks") or {}
+                if isinstance(checks.get("live_sandbox"), dict):
+                    live_ok = live_ok or checks["live_sandbox"].get("ok") is True
+                if payload.get("status") in {"ready", "degraded"} and live_ok:
+                    return payload
         except httpx.HTTPError:
             pass
         time.sleep(3.0)

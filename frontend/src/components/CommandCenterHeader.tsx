@@ -20,7 +20,7 @@ type Props = {
 
 const STATUS_LABEL: Record<LabStatus, string> = {
   offline: "LIVE ENVIRONMENT UNAVAILABLE",
-  starting: "STARTING LIVE LAB",
+  starting: "WARMING UP LIVE INCIDENT LAB",
   warming: "WARMING SANDBOX",
   ready: "LIVE LAB READY",
   busy: "BUSY",
