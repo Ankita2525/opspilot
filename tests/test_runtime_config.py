@@ -130,6 +130,13 @@ def test_health_remains_ok_for_injected_app() -> None:
     assert response.json() == {"status": "ok", "service": "opspilot"}
 
 
+def test_healthz_is_process_local() -> None:
+    client = TestClient(create_app(provider=FakeModelProvider()))
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_readiness_response_contains_no_credentials() -> None:
     settings = OpsPilotSettings.from_env(
         {
@@ -142,8 +149,11 @@ def test_readiness_response_contains_no_credentials() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ready"
+    assert payload["degraded"] is False
     assert payload["model_provider"] == "deterministic"
     assert payload["database"] == "in_memory"
+    assert "checks" in payload
+    assert payload["checks"]["database"]["ok"] is True
     blob = json.dumps(payload)
     _assert_no_secret_values(blob)
 

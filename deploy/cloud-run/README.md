@@ -48,7 +48,7 @@ Output: `deploy/cloud-run/rendered/service.yaml` (gitignored).
 
 ## Pre-deploy gate (required)
 
-No real Cloud Run deploy may run unless **all four** checks pass, in order.
+No real Cloud Run deploy may run unless **all** checks pass, in order.
 
 Secret Manager versions are **pinned** in `render.vars` (never `latest`). Cloud Run
 only creates a new revision when the service template changes; rotating a secret
@@ -62,17 +62,24 @@ uv run python deploy/cloud-run/preflight_secret_pins.py \
   --vars-file=deploy/cloud-run/render.vars
 ```
 
-**B. Cloud Run render/profile + DB preflight unit tests**
+**B. Probe-replay (revision 00003 class): `/healthz` isolated, `/ready` degrades**
+
+```bash
+uv run python deploy/cloud-run/preflight_probe_replay.py
+```
+
+**C. Cloud Run render/profile + DB + secret-pin + probe-replay unit tests**
 
 ```bash
 uv run pytest -q \
   tests/test_cloud_run_profile.py \
   tests/test_cloud_run_render.py \
   tests/test_cloud_run_db_preflight.py \
-  tests/test_cloud_run_secret_pins.py
+  tests/test_cloud_run_secret_pins.py \
+  tests/test_cloud_run_probe_replay.py
 ```
 
-**C. Render with an immutable image tag and pinned secret versions**
+**D. Render with an immutable image tag and pinned secret versions**
 
 ```bash
 python deploy/cloud-run/render_service.py \
@@ -82,7 +89,7 @@ python deploy/cloud-run/render_service.py \
   --vars-file deploy/cloud-run/render.vars
 ```
 
-**D. Cloud Run server-side validation (dry-run only)**
+**E. Cloud Run server-side validation (dry-run only)**
 
 ```bash
 gcloud run services replace \
@@ -92,7 +99,62 @@ gcloud run services replace \
   --dry-run
 ```
 
-Real deploy (only after A–D pass, and only when explicitly requested):
+### Health contract
+
+| Endpoint | Role | Cloud Run probe? |
+|----------|------|------------------|
+| `GET /healthz` | Process-local: FastAPI accepts HTTP. **No** DB/HTTP/Loki/Prometheus/lease I/O. | **Yes** — startup + liveness |
+| `GET /health` | Legacy public health (`status` + `service`). | No |
+| `GET /ready` | Deep diagnostic dependency health (async, cached, degraded-tolerant). | **No** |
+
+Revision annotation `run.googleapis.com/startup-cpu-boost: "true"` is enabled while
+preserving `minScale=0`, `maxScale=1`, and `cpu-throttling=true`.
+
+### Canary deploy plan (do not skip)
+
+`gcloud run services replace` has **no** `--no-traffic` flag. Use traffic pinning + tags.
+
+When a healthy serving revision already exists:
+
+```bash
+# 1) Pin 100% traffic to the current healthy revision (not LATEST)
+CURRENT=$(gcloud run services describe opspilot-live-lab \
+  --project=opspilot-live-lab --region=us-central1 \
+  --format='value(status.traffic[0].revisionName)')
+
+gcloud run services update-traffic opspilot-live-lab \
+  --project=opspilot-live-lab --region=us-central1 \
+  --to-revisions="${CURRENT}=100"
+
+# 2) Replace creates a new LATEST revision with 0% traffic while CURRENT stays at 100%
+gcloud run services replace deploy/cloud-run/rendered/service.yaml \
+  --project=opspilot-live-lab --region=us-central1
+
+# 3) Wait until the new revision is Ready=True
+gcloud run revisions list --service=opspilot-live-lab \
+  --project=opspilot-live-lab --region=us-central1
+
+# 4) Tag LATEST for direct canary URL (does not change percent traffic)
+gcloud run services update-traffic opspilot-live-lab \
+  --project=opspilot-live-lab --region=us-central1 \
+  --update-tags=canary=LATEST
+
+# 5) Smoke the tagged URL only:
+#    https://canary---opspilot-live-lab-<hash>-uc.a.run.app/healthz
+#    https://canary---.../ready
+
+# 6) Promote only after smoke passes
+gcloud run services update-traffic opspilot-live-lab \
+  --project=opspilot-live-lab --region=us-central1 \
+  --to-latest --clear-tags
+```
+
+When **no** healthy revision exists (current lab after failed startups), step 1 cannot
+pin traffic. In that case `services replace` is required to obtain the first Ready
+revision; smoke `/healthz` + `/ready` on the service URL immediately after Ready=True,
+then keep traffic on that revision before further replaces.
+
+Real replace (only after A–E pass, and only when explicitly requested):
 
 ```bash
 gcloud run services replace \
@@ -181,6 +243,7 @@ gcloud secrets create opspilot-prometheus-config --data-file=deploy/cloud-run/pr
 
 ```bash
 docker compose -f docker-compose.cloud-run-local.yml up --build
+curl -fsS http://localhost:8000/healthz
 curl -fsS http://localhost:8000/ready
 python scripts/validate_cloud_run_local.py
 ```
@@ -193,6 +256,7 @@ python scripts/validate_cloud_run_local.py
 | `render_service.py` | Substitute project/region/tag + deploy-time vars + secret version pins |
 | `preflight_database.py` | Parse `DATABASE_URL` with libpq and run `SELECT 1` (no secret output) |
 | `preflight_secret_pins.py` | Confirm pinned versions are ENABLED; DB pin parse/connect/`SELECT 1` |
+| `preflight_probe_replay.py` | `/healthz` isolation + `/ready` degradation + event-loop responsiveness |
 | `render.vars.example` | Non-secret deploy-time values + explicit secret version pins |
 | `prometheus.yml` | Localhost scrape targets (uploaded to Secret Manager) |
 | `otel-collector.yaml` | Source for embedded OTEL config (not stored in Secret Manager) |

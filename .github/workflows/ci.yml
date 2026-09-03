@@ -139,10 +139,13 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            if curl -fsS http://localhost:8000/ready > /tmp/ready.json; then
-              python -c "import json; payload=json.load(open('/tmp/ready.json', encoding='utf-8')); assert payload['status'] == 'ready', payload; assert payload['database'] == 'ready', payload; assert payload['model_provider'] == 'deterministic', payload"
-              echo "Backend ready after ${attempt} attempt(s)"
-              exit 0
+            if curl -fsS --max-time 1 http://localhost:8000/healthz > /tmp/healthz.json; then
+              python -c "import json; payload=json.load(open('/tmp/healthz.json', encoding='utf-8')); assert payload['status'] == 'ok', payload"
+              if curl -fsS --max-time 10 http://localhost:8000/ready > /tmp/ready.json; then
+                python -c "import json; payload=json.load(open('/tmp/ready.json', encoding='utf-8')); assert payload['status'] in {'ready', 'degraded'}, payload; assert payload['database'] == 'ready', payload; assert payload['model_provider'] == 'deterministic', payload; assert 'checks' in payload"
+                echo "Backend ready after ${attempt} attempt(s)"
+                exit 0
+              fi
             fi
             echo "Waiting for backend readiness (${attempt}/30)..."
             sleep 5
@@ -153,6 +156,7 @@ jobs:
       - name: Smoke test API endpoints
         run: |
           set -euo pipefail
+          curl -fsS http://localhost:8000/healthz
           curl -fsS http://localhost:8000/health
           curl -fsS http://localhost:8000/ready
           curl -fsS http://localhost:8000/api/evaluations/baseline > /tmp/baseline.json

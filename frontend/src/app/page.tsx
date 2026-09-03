@@ -17,6 +17,7 @@ import { ScenarioCard } from "@/components/ScenarioCard";
 import { ServiceTopology } from "@/components/ServiceTopology";
 import { TelemetryBands } from "@/components/TelemetryBands";
 import {
+  getHealthz,
   getIncidentProvenance,
   getRuntimeSummary,
   getSandboxStatus,
@@ -103,35 +104,53 @@ export default function Home() {
     let cancelled = false;
 
     async function loadOnMount() {
-      try {
-        const [loaded, runtime, status] = await Promise.all([
-          getScenarios(),
-          getRuntimeSummary().catch(() => null),
-          getSandboxStatus().catch(() => null),
-        ]);
-        if (cancelled) {
+      const maxAttempts = 20;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          // Prefer process-local health during Cloud Run cold start; tolerate
+          // temporary deep /ready degradation without inventing telemetry.
+          await getHealthz();
+          const [loaded, runtime, status] = await Promise.all([
+            getScenarios(),
+            getRuntimeSummary().catch(() => null),
+            getSandboxStatus().catch(() => null),
+          ]);
+          if (cancelled) {
+            return;
+          }
+          if (!loaded[0]) {
+            throw new Error("No demo scenarios are available.");
+          }
+          setScenarios(loaded);
+          setSelectedScenarioId(loaded[0].id);
+          if (runtime?.telemetry_mode) {
+            setTelemetryMode(runtime.telemetry_mode);
+          }
+          if (status?.state) {
+            setSandboxState(status.state);
+          }
+          setError(null);
+          setPhase("ready");
+          return;
+        } catch (cause) {
+          if (cancelled) {
+            return;
+          }
+          const message =
+            cause instanceof Error ? cause.message : "Unable to load scenarios.";
+          const isReachability =
+            message.includes("Unable to reach OpsPilot") ||
+            message.includes("Failed to fetch");
+          if (isReachability && attempt < maxAttempts) {
+            setPhase("loading");
+            setError(null);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          setError(message);
+          setPhase("ready");
           return;
         }
-        if (!loaded[0]) {
-          throw new Error("No demo scenarios are available.");
-        }
-        setScenarios(loaded);
-        setSelectedScenarioId(loaded[0].id);
-        if (runtime?.telemetry_mode) {
-          setTelemetryMode(runtime.telemetry_mode);
-        }
-        if (status?.state) {
-          setSandboxState(status.state);
-        }
-        setPhase("ready");
-      } catch (cause) {
-        if (cancelled) {
-          return;
-        }
-        setError(
-          cause instanceof Error ? cause.message : "Unable to load scenarios.",
-        );
-        setPhase("ready");
       }
     }
 
@@ -395,7 +414,7 @@ export default function Home() {
 
         {phase === "loading" ? (
           <p className="status-copy" aria-live="polite">
-            Loading incidents…
+            Warming up live incident lab…
           </p>
         ) : null}
 

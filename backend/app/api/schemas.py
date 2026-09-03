@@ -16,10 +16,31 @@ class HealthResponse(BaseModel):
     service: str
 
 
-class ReadyResponse(BaseModel):
+class HealthzResponse(BaseModel):
+    """Process-local liveness: FastAPI can accept HTTP. No dependency I/O."""
+
     model_config = ConfigDict(frozen=True)
 
-    status: Literal["ready", "degraded", "unready"]
+    status: Literal["ok"]
+
+
+class ReadyCheckResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ok: bool
+    latency_ms: float | None = None
+    detail: str
+
+
+class ReadyResponse(BaseModel):
+    """Deep diagnostic dependency health. Not a Cloud Run lifecycle probe."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ready", "degraded"]
+    degraded: bool
+    checks: dict[str, ReadyCheckResult] = Field(default_factory=dict)
+    # Flat fields retained for existing clients / CI assertions.
     database: str
     model_provider: str
     lease_subsystem: str = "not_configured"

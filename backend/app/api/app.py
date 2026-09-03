@@ -23,6 +23,7 @@ from backend.app.api.public_records import (
 from backend.app.api.schemas import (
     BaselineEvaluationResponse,
     HealthResponse,
+    HealthzResponse,
     IncidentApprovalResponse,
     IncidentAuditResponse,
     IncidentProvenanceResponse,
@@ -354,9 +355,15 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="opspilot")
 
+    @app.get("/healthz", response_model=HealthzResponse)
+    def healthz() -> HealthzResponse:
+        """Process-safe probe target: no DB, HTTP, Loki, Prometheus, or lease I/O."""
+        return HealthzResponse(status="ok")
+
     @app.get("/ready", response_model=ReadyResponse)
-    def ready() -> ReadyResponse:
-        report = assess_readiness(runtime, resolved_hardening)
+    async def ready() -> ReadyResponse:
+        """Deep dependency diagnostic. Not used as a Cloud Run lifecycle probe."""
+        report = await assess_readiness(runtime, resolved_hardening)
         payload = report.to_response()
         return ReadyResponse(**payload)
 

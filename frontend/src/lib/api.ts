@@ -108,6 +108,18 @@ export function getRuntimeSummary(): Promise<RuntimeSummary> {
   return request<RuntimeSummary>("/api/runtime");
 }
 
+export function getHealthz(): Promise<{ status: string }> {
+  return request<{ status: string }>("/healthz");
+}
+
+export function getReadiness(): Promise<{
+  status: string;
+  degraded: boolean;
+  checks?: Record<string, { ok: boolean; detail: string }>;
+}> {
+  return request("/ready");
+}
+
 export function getIncidentProvenance(incidentId: string): Promise<LiveProvenance> {
   return request<LiveProvenance>(`/api/incidents/${incidentId}/provenance`);
 }
