@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from backend.app.models.provider import ModelProvider
+from backend.app.models.provider_errors import ModelCallError
 from backend.app.quotas.guard import QuotaExceeded, QuotaGuard
 
 if TYPE_CHECKING:
@@ -19,7 +20,11 @@ class AICapacityUnavailable(Exception):
 
 
 class BudgetGuardedModelProvider:
-    """Wraps a ModelProvider with quota enforcement before inference."""
+    """Wraps a ModelProvider with quota enforcement before inference.
+
+    Reserves once per logical model stage. Provider-layer HTTP retries must not
+    reserve additional public-demo quota.
+    """
 
     def __init__(
         self,
@@ -50,6 +55,7 @@ class BudgetGuardedModelProvider:
         system_prompt: str,
         user_prompt: str,
         response_model: type[T],
+        **kwargs,
     ) -> T:
         if self._enforce_budget:
             if self._quota_guard.is_global_budget_exhausted():
@@ -68,8 +74,14 @@ class BudgetGuardedModelProvider:
                     system_prompt,
                     user_prompt,
                     response_model,
+                    **kwargs,
                 )
+            except ModelCallError as exc:
+                if exc.refund_quota and self._incident_id is not None:
+                    self._quota_guard.reconcile_failed_incident_call(self._incident_id)
+                raise
             except Exception:
+                # Unknown failures: refund per-incident reservation; keep daily counters.
                 if self._incident_id is not None:
                     self._quota_guard.reconcile_failed_incident_call(self._incident_id)
                 raise
@@ -77,4 +89,5 @@ class BudgetGuardedModelProvider:
             system_prompt,
             user_prompt,
             response_model,
+            **kwargs,
         )

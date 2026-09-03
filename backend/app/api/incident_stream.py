@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 
@@ -10,8 +11,11 @@ from backend.app.agent.incident_response import IncidentResponseStartResult
 from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.events.models import InvestigationEvent, InvestigationEventType
 from backend.app.events.sse import encode_sse
+from backend.app.models.provider_errors import ModelCallError
 from backend.app.safety.models import RiskLevel
 from simulator.models import IncidentScenario
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_EVENT_TYPES = {
     InvestigationEventType.APPROVAL_REQUIRED,
@@ -25,6 +29,7 @@ BeginIncident = Callable[
     IncidentResponseStartResult,
 ]
 Clock = Callable[[], datetime]
+FailureHandler = Callable[[Exception], None]
 
 
 def streamed_incident_response(
@@ -33,6 +38,7 @@ def streamed_incident_response(
     incident_id: str,
     begin_incident: BeginIncident,
     now: Clock | None = None,
+    on_failure: FailureHandler | None = None,
 ) -> StreamingResponse:
     queue: asyncio.Queue[InvestigationEvent | None] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -52,6 +58,7 @@ def streamed_incident_response(
                 scenario=scenario,
                 begin_incident=begin_incident,
                 emitter=emitter,
+                on_failure=on_failure,
             )
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -85,6 +92,7 @@ def _execute_streamed_incident(
     scenario: IncidentScenario,
     begin_incident: BeginIncident,
     emitter: InvestigationEventEmitter,
+    on_failure: FailureHandler | None = None,
 ) -> None:
     emitter.emit(
         InvestigationEventType.INCIDENT_STARTED,
@@ -96,12 +104,21 @@ def _execute_streamed_incident(
     )
     try:
         started = begin_incident(scenario, emitter)
-    except Exception:
+    except Exception as exc:
+        _log_failure(exc)
+        if on_failure is not None:
+            try:
+                on_failure(exc)
+            except Exception:
+                logger.exception("incident failure handler failed")
+        public_error = "diagnosis_unavailable"
+        if isinstance(exc, ModelCallError):
+            public_error = "diagnosis_unavailable"
         emitter.emit(
             InvestigationEventType.INCIDENT_FAILED,
             message="Investigation could not be completed.",
             data={
-                "error": "investigation_failed",
+                "error": public_error,
                 "message": "Investigation could not be completed.",
             },
         )
@@ -130,4 +147,17 @@ def _execute_streamed_incident(
             "status": started.status,
             "recommended_action": started.recommended_action,
         },
+    )
+
+
+def _log_failure(exc: Exception) -> None:
+    if isinstance(exc, ModelCallError):
+        logger.warning(
+            "streamed_incident_model_failure %s",
+            exc.meta.safe_log_dict(),
+        )
+        return
+    logger.exception(
+        "streamed_incident_failed exception_class=%s",
+        type(exc).__name__,
     )

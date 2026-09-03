@@ -195,6 +195,14 @@ def rollback(request: Request, body: dict) -> dict:
     return revision_state.status()
 
 
+@app.post("/internal/control/clear-fault")
+def clear_fault(request: Request) -> dict:
+    verify_control_token(request)
+    status = revision_state.clear_fault()
+    logger._revision = revision_state.current_revision
+    return status
+
+
 @app.get("/internal/deployments")
 def deployments() -> list[dict]:
     return revision_state.deployment_history

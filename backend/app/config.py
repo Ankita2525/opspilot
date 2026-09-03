@@ -56,8 +56,10 @@ class OpsPilotSettings(BaseModel):
     sandbox_control_token: str | None = Field(default=None, repr=False)
     # Public sandbox hardening
     session_cookie_secure: bool = False
-    lease_ttl_seconds: int = 600
-    incident_ttl_seconds: int = 1800
+    lease_ttl_seconds: int = 240
+    incident_ttl_seconds: int = 240
+    approval_timeout_seconds: int = 240
+    fault_ttl_seconds: int = 300
     turnstile_required: bool = False
     turnstile_secret_key: str | None = Field(default=None, repr=False)
     turnstile_site_key: str | None = None
@@ -134,10 +136,14 @@ class OpsPilotSettings(BaseModel):
             session_cookie_secure=_parse_bool(
                 env.get("OPSPILOT_SESSION_COOKIE_SECURE", "false")
             ),
-            lease_ttl_seconds=_parse_int(env.get("OPSPILOT_LEASE_TTL_SECONDS", "600")),
+            lease_ttl_seconds=_parse_int(env.get("OPSPILOT_LEASE_TTL_SECONDS", "240")),
             incident_ttl_seconds=_parse_int(
-                env.get("OPSPILOT_INCIDENT_TTL_SECONDS", "1800")
+                env.get("OPSPILOT_INCIDENT_TTL_SECONDS", "240")
             ),
+            approval_timeout_seconds=_parse_int(
+                env.get("OPSPILOT_APPROVAL_TIMEOUT_SECONDS", "240")
+            ),
+            fault_ttl_seconds=_parse_int(env.get("OPSPILOT_FAULT_TTL_SECONDS", "300")),
             turnstile_required=_parse_bool(env.get("OPSPILOT_TURNSTILE_REQUIRED", "false")),
             turnstile_secret_key=_optional(env.get("OPSPILOT_TURNSTILE_SECRET_KEY")),
             turnstile_site_key=_optional(env.get("OPSPILOT_TURNSTILE_SITE_KEY")),
@@ -195,6 +201,12 @@ class OpsPilotSettings(BaseModel):
             if not self.sandbox_control_token:
                 raise ConfigurationError(
                     "SANDBOX_CONTROL_TOKEN is required when OPSPILOT_TELEMETRY_MODE=live."
+                )
+            if self.approval_timeout_seconds >= self.fault_ttl_seconds:
+                raise ConfigurationError(
+                    "OPSPILOT_APPROVAL_TIMEOUT_SECONDS must be strictly less than "
+                    "OPSPILOT_FAULT_TTL_SECONDS so sidecar dead-man TTL can reclaim "
+                    "faults without a heartbeat."
                 )
 
     @property

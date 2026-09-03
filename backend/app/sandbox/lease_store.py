@@ -36,6 +36,8 @@ class GlobalSandboxLeaseStore(Protocol):
 
     def inspect(self) -> GlobalSandboxLease | None: ...
 
+    def peek(self) -> GlobalSandboxLease | None: ...
+
     def expire_stale(self) -> int: ...
 
     def quarantine(self, *, incident_id: str, reason: str) -> None: ...
@@ -240,6 +242,10 @@ class PostgresGlobalSandboxLeaseStore:
                 return None
             return _lease_from_row(row)
 
+    def peek(self) -> GlobalSandboxLease | None:
+        """Inspect without mutating expired→idle transitions."""
+        return self.inspect()
+
     def expire_stale(self) -> int:
         now = datetime.now(UTC)
         with psycopg.connect(self._database_url) as conn:
@@ -412,6 +418,11 @@ class InMemoryGlobalSandboxLeaseStore:
     def inspect(self) -> GlobalSandboxLease | None:
         with self._lock:
             self._expire_stale_locked(datetime.now(UTC))
+            return self._lease
+
+    def peek(self) -> GlobalSandboxLease | None:
+        """Return current lease without auto-expiring stale rows."""
+        with self._lock:
             return self._lease
 
     def expire_stale(self) -> int:

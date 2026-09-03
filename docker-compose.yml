@@ -27,6 +27,11 @@ services:
       OPSPILOT_PROMETHEUS_URL: ${OPSPILOT_PROMETHEUS_URL:-http://prometheus:9090}
       OPSPILOT_LOKI_URL: ${OPSPILOT_LOKI_URL:-http://loki:3100}
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      SANDBOX_FAULT_TTL_SECONDS: ${SANDBOX_FAULT_TTL_SECONDS:-300}
+      OPSPILOT_LEASE_TTL_SECONDS: ${OPSPILOT_LEASE_TTL_SECONDS:-240}
+      OPSPILOT_INCIDENT_TTL_SECONDS: ${OPSPILOT_INCIDENT_TTL_SECONDS:-240}
+      OPSPILOT_APPROVAL_TIMEOUT_SECONDS: ${OPSPILOT_APPROVAL_TIMEOUT_SECONDS:-240}
+      OPSPILOT_FAULT_TTL_SECONDS: ${OPSPILOT_FAULT_TTL_SECONDS:-300}
       CHECKOUT_API_URL: http://checkout-api:8081
       AUTH_SERVICE_URL: http://auth-service:8082
       PAYMENTS_SERVICE_URL: http://payments-service:8083
@@ -96,6 +101,7 @@ services:
       SANDBOX_SERVICE_NAME: checkout-api
       CHECKOUT_DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      SANDBOX_FAULT_TTL_SECONDS: ${SANDBOX_FAULT_TTL_SECONDS:-300}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8081:8081"
@@ -119,6 +125,7 @@ services:
     environment:
       SANDBOX_SERVICE_NAME: auth-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      SANDBOX_FAULT_TTL_SECONDS: ${SANDBOX_FAULT_TTL_SECONDS:-300}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8082:8082"
@@ -140,6 +147,7 @@ services:
     environment:
       SANDBOX_SERVICE_NAME: provider-service
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      SANDBOX_FAULT_TTL_SECONDS: ${SANDBOX_FAULT_TTL_SECONDS:-300}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8084:8084"
@@ -162,6 +170,7 @@ services:
       SANDBOX_SERVICE_NAME: payments-service
       PROVIDER_SERVICE_URL: http://provider-service:8084
       SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:-sandbox-control-test-token}
+      SANDBOX_FAULT_TTL_SECONDS: ${SANDBOX_FAULT_TTL_SECONDS:-300}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8083:8083"
