@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import re
 from pathlib import Path
 
 import yaml
@@ -63,6 +64,23 @@ def test_min_and_max_instances() -> None:
     annotations = _service_spec()["spec"]["template"]["metadata"]["annotations"]
     assert annotations["autoscaling.knative.dev/minScale"] == "0"
     assert annotations["autoscaling.knative.dev/maxScale"] == "1"
+
+
+_GCP_LABEL_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+_GCP_LABEL_VALUE = re.compile(r"^[a-z0-9_-]{0,63}$")
+
+
+def test_gcp_labels_conform_to_naming_style() -> None:
+    spec = _service_spec()
+    service_labels = spec["metadata"].get("labels") or {}
+    revision_labels = spec["spec"]["template"]["metadata"].get("labels") or {}
+    assert "opspilot.deployment_profile" not in service_labels
+    assert "opspilot.deployment_profile" not in revision_labels
+    assert service_labels.get("opspilot_deployment_profile") == "ephemeral_live_lab"
+    for labels in (service_labels, revision_labels):
+        for key, value in labels.items():
+            assert _GCP_LABEL_KEY.fullmatch(key), key
+            assert _GCP_LABEL_VALUE.fullmatch(str(value)), f"{key}={value}"
 
 
 def test_request_based_billing_cpu_throttling_enabled() -> None:

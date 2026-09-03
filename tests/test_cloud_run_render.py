@@ -20,6 +20,9 @@ OTEL_IMAGE = "otel/opentelemetry-collector-contrib:0.120.0"
 OTEL_IMAGE_PULL_TIMEOUT_SECONDS = 300
 OTEL_COLLECTOR_STARTUP_TIMEOUT_SECONDS = 15
 
+GCP_LABEL_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+GCP_LABEL_VALUE = re.compile(r"^[a-z0-9_-]{0,63}$")
+
 SENSITIVE_ENV_NAMES = frozenset(
     {
         "DATABASE_URL",
@@ -225,6 +228,19 @@ def test_cloud_run_service_account_configured() -> None:
 def test_public_access_invoker_iam_disabled() -> None:
     annotations = _rendered_spec()["metadata"]["annotations"]
     assert annotations["run.googleapis.com/invoker-iam-disabled"] == "true"
+
+
+def test_gcp_labels_conform_to_naming_style() -> None:
+    spec = _rendered_spec()
+    service_labels = spec["metadata"].get("labels") or {}
+    revision_labels = spec["spec"]["template"]["metadata"].get("labels") or {}
+    assert "opspilot.deployment_profile" not in service_labels
+    assert "opspilot.deployment_profile" not in revision_labels
+    assert service_labels.get("opspilot_deployment_profile") == "ephemeral_live_lab"
+    for labels in (service_labels, revision_labels):
+        for key, value in labels.items():
+            assert GCP_LABEL_KEY.fullmatch(key), key
+            assert GCP_LABEL_VALUE.fullmatch(str(value)), f"{key}={value}"
 
 
 def test_container_dependencies_are_revision_scoped() -> None:
