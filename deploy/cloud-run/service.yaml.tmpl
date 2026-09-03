@@ -3,7 +3,8 @@
 # Template — do not deploy directly. Render with:
 #   python deploy/cloud-run/render_service.py --project-id ... --region ... --image-tag ...
 #
-# Only the opspilot container receives public ingress (PORT, default 8000).
+# Only the opspilot container receives public ingress (containerPort 8000).
+# Cloud Run injects PORT for that container; do not set reserved runtime env names.
 # Sidecars communicate over localhost inside the instance network namespace.
 
 apiVersion: serving.knative.dev/v1
@@ -39,8 +40,6 @@ spec:
               cpu: "2"
               memory: 2Gi
           env:
-            - name: PORT
-              value: "8000"
             - name: OPSPILOT_ENV
               value: production
             - name: OPSPILOT_DEPLOYMENT_PROFILE

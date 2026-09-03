@@ -22,6 +22,9 @@ OTEL_COLLECTOR_STARTUP_TIMEOUT_SECONDS = 15
 
 GCP_LABEL_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 GCP_LABEL_VALUE = re.compile(r"^[a-z0-9_-]{0,63}$")
+CLOUD_RUN_RESERVED_ENV = frozenset(
+    {"PORT", "K_SERVICE", "K_REVISION", "K_CONFIGURATION"}
+)
 
 SENSITIVE_ENV_NAMES = frozenset(
     {
@@ -241,6 +244,26 @@ def test_gcp_labels_conform_to_naming_style() -> None:
         for key, value in labels.items():
             assert GCP_LABEL_KEY.fullmatch(key), key
             assert GCP_LABEL_VALUE.fullmatch(str(value)), f"{key}={value}"
+
+
+def test_cloud_run_runtime_contract_env_and_ingress_port() -> None:
+    spec = _rendered_spec()["spec"]["template"]["spec"]
+    containers = spec["containers"]
+    assert len(containers) == 7
+    ingress = next(c for c in containers if c["name"] == "opspilot")
+    assert ingress["ports"] == [{"containerPort": 8000}]
+    for container in containers:
+        assert "envFrom" not in container, f"{container['name']} must not use envFrom"
+        names = [item["name"] for item in container.get("env", [])]
+        reserved = CLOUD_RUN_RESERVED_ENV.intersection(names)
+        assert not reserved, f"{container['name']} defines reserved env: {sorted(reserved)}"
+        assert len(names) == len(set(names)), f"{container['name']} has duplicate env names"
+    dockerfile_cmd = [
+        line
+        for line in (ROOT / "Dockerfile").read_text().splitlines()
+        if line.startswith("CMD")
+    ][-1]
+    assert "${PORT:-8000}" in dockerfile_cmd
 
 
 def test_container_dependencies_are_revision_scoped() -> None:

@@ -127,6 +127,11 @@ def test_ingress_binds_all_interfaces_not_localhost() -> None:
     assert "0.0.0.0" in cmd_line
     assert "${PORT:-8000}" in cmd_line
     assert "127.0.0.1" not in cmd_line
+    containers = _service_spec()["spec"]["template"]["spec"]["containers"]
+    opspilot = next(c for c in containers if c["name"] == "opspilot")
+    assert opspilot["ports"][0]["containerPort"] == 8000
+    env_names = [item["name"] for item in opspilot.get("env", [])]
+    assert "PORT" not in env_names
 
 
 def test_opspilot_startup_probe_uses_ready_not_health_only() -> None:
