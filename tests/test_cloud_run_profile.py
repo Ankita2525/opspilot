@@ -172,6 +172,38 @@ def test_http_probes_do_not_set_host() -> None:
         assert http_get["port"] == expected["port"]
 
 
+def test_every_container_dependency_has_startup_probe() -> None:
+    spec = _service_spec()
+    containers = {c["name"]: c for c in spec["spec"]["template"]["spec"]["containers"]}
+    raw = spec["spec"]["template"]["metadata"]["annotations"][
+        "run.googleapis.com/container-dependencies"
+    ]
+    graph = json.loads(raw)
+    targets = {name for deps in graph.values() for name in deps}
+    assert targets
+    expected_http_probes = {
+        "checkout-api": ("/health", 8081),
+        "auth-service": ("/health", 8082),
+        "payments-service": ("/health", 8083),
+        "provider-service": ("/health", 8084),
+        "prometheus": ("/-/ready", 9090),
+    }
+    for target in targets:
+        assert target in containers, f"dependency {target} has no matching container"
+        container = containers[target]
+        assert "startupProbe" in container, f"{target} is a dependency without startupProbe"
+        probe = container["startupProbe"]
+        assert "httpGet" in probe or "tcpSocket" in probe, (
+            f"{target} startupProbe must use httpGet or tcpSocket"
+        )
+        if target == "otel-collector":
+            assert probe["tcpSocket"]["port"] == 4318
+        if target in expected_http_probes:
+            path, port = expected_http_probes[target]
+            assert probe["httpGet"]["path"] == path
+            assert probe["httpGet"]["port"] == port
+
+
 def test_container_dependencies_are_revision_scoped() -> None:
     spec = _service_spec()
     service_annotations = spec["metadata"].get("annotations", {})

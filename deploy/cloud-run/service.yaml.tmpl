@@ -254,6 +254,12 @@ spec:
                 secretKeyRef:
                   name: opspilot-grafana-loki-authorization
                   key: latest
+          startupProbe:
+            tcpSocket:
+              port: 4318
+            timeoutSeconds: 1
+            periodSeconds: 5
+            failureThreshold: 18
 
       volumes:
         - name: prometheus-config
