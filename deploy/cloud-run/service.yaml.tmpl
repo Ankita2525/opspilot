@@ -13,7 +13,6 @@ metadata:
   labels:
     opspilot.deployment_profile: ephemeral_live_lab
   annotations:
-    run.googleapis.com/container-dependencies: '{"opspilot":["checkout-api","auth-service","payments-service","provider-service","prometheus","otel-collector"]}'
     run.googleapis.com/invoker-iam-disabled: "true"
 spec:
   template:
@@ -22,6 +21,7 @@ spec:
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "1"
         run.googleapis.com/cpu-throttling: "true"
+        run.googleapis.com/container-dependencies: '{"opspilot":["checkout-api","auth-service","payments-service","provider-service","prometheus","otel-collector"]}'
         run.googleapis.com/secrets: "opspilot-database-url:projects/{{PROJECT_ID}}/secrets/opspilot-database-url,opspilot-groq-api-key:projects/{{PROJECT_ID}}/secrets/opspilot-groq-api-key,opspilot-sandbox-control-token:projects/{{PROJECT_ID}}/secrets/opspilot-sandbox-control-token,opspilot-turnstile-secret:projects/{{PROJECT_ID}}/secrets/opspilot-turnstile-secret,opspilot-grafana-loki-authorization:projects/{{PROJECT_ID}}/secrets/opspilot-grafana-loki-authorization,opspilot-prometheus-config:projects/{{PROJECT_ID}}/secrets/opspilot-prometheus-config"
     spec:
       serviceAccountName: opspilot-cloud-run@{{PROJECT_ID}}.iam.gserviceaccount.com

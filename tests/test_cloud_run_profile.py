@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import importlib.util
 from pathlib import Path
 
@@ -153,10 +154,22 @@ def test_http_probes_do_not_set_host() -> None:
         assert http_get["port"] == expected["port"]
 
 
-def test_container_dependencies_annotation_present() -> None:
-    annotations = _service_spec()["metadata"]["annotations"]
-    assert "run.googleapis.com/container-dependencies" in annotations
-    assert "opspilot" in annotations["run.googleapis.com/container-dependencies"]
+def test_container_dependencies_are_revision_scoped() -> None:
+    spec = _service_spec()
+    service_annotations = spec["metadata"].get("annotations", {})
+    revision_annotations = spec["spec"]["template"]["metadata"]["annotations"]
+    assert "run.googleapis.com/container-dependencies" not in service_annotations
+    raw = revision_annotations["run.googleapis.com/container-dependencies"]
+    assert json.loads(raw) == {
+        "opspilot": [
+            "checkout-api",
+            "auth-service",
+            "payments-service",
+            "provider-service",
+            "prometheus",
+            "otel-collector",
+        ]
+    }
 
 
 def test_prometheus_listen_localhost_only() -> None:

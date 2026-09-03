@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import shutil
 import subprocess
@@ -224,6 +225,25 @@ def test_cloud_run_service_account_configured() -> None:
 def test_public_access_invoker_iam_disabled() -> None:
     annotations = _rendered_spec()["metadata"]["annotations"]
     assert annotations["run.googleapis.com/invoker-iam-disabled"] == "true"
+
+
+def test_container_dependencies_are_revision_scoped() -> None:
+    spec = _rendered_spec()
+    service_annotations = spec["metadata"].get("annotations", {})
+    revision_annotations = spec["spec"]["template"]["metadata"]["annotations"]
+    assert "run.googleapis.com/container-dependencies" not in service_annotations
+    assert service_annotations.get("run.googleapis.com/invoker-iam-disabled") == "true"
+    raw = revision_annotations["run.googleapis.com/container-dependencies"]
+    assert json.loads(raw) == {
+        "opspilot": [
+            "checkout-api",
+            "auth-service",
+            "payments-service",
+            "provider-service",
+            "prometheus",
+            "otel-collector",
+        ]
+    }
 
 
 def test_otel_collector_uses_env_config_provider() -> None:
