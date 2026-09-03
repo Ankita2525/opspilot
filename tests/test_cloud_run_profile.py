@@ -48,7 +48,8 @@ def test_only_opspilot_has_public_port() -> None:
     assert ingress[0]["ports"][0]["containerPort"] == 8000
 
 
-def test_sidecars_use_localhost_command_hosts() -> None:
+def test_sidecars_listen_all_interfaces_for_cloud_run_probes() -> None:
+    """Cloud Run probes cannot reach 127.0.0.1-only listeners (rev 00002 evidence)."""
     text = _rendered_service_text()
     for port, name in (
         ("8081", "checkout-api"),
@@ -56,7 +57,8 @@ def test_sidecars_use_localhost_command_hosts() -> None:
         ("8083", "payments-service"),
         ("8084", "provider-service"),
     ):
-        assert f'"127.0.0.1", "--port", "{port}"' in text
+        assert f'"0.0.0.0", "--port", "{port}"' in text
+        assert f'"127.0.0.1", "--port", "{port}"' not in text
         assert name in text
 
 
@@ -227,9 +229,10 @@ def test_container_dependencies_are_revision_scoped() -> None:
     }
 
 
-def test_prometheus_listen_localhost_only() -> None:
+def test_prometheus_listens_all_interfaces_for_probes() -> None:
     text = _rendered_service_text()
-    assert "--web.listen-address=127.0.0.1:9090" in text
+    assert "--web.listen-address=0.0.0.0:9090" in text
+    assert "--web.listen-address=127.0.0.1:9090" not in text
 
 
 def test_backend_env_localhost_service_urls() -> None:

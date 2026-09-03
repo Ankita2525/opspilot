@@ -7,7 +7,9 @@ This deployment profile is **separate** from the [full production architecture](
 
 - `min instances = 0`, `max instances = 1`
 - Single public ingress (OpsPilot FastAPI on port 8000)
-- Sandbox + observability sidecars on `127.0.0.1` inside the instance
+- Sandbox + observability sidecars share the instance network namespace
+- Sidecars **listen on `0.0.0.0`** so Cloud Run startup probes can reach them
+- Inter-container URLs stay `http://127.0.0.1:<port>` (loopback clients)
 - Real HTTP faults, real telemetry, no simulator fallback in live mode
 - Neon PostgreSQL for durable lease / incident / provenance state
 - Grafana Cloud Loki for logs (OTEL collector sidecar)
@@ -15,16 +17,18 @@ This deployment profile is **separate** from the [full production architecture](
 
 ## Container topology
 
-| Container | Role | Address |
-|-----------|------|---------|
-| `opspilot` | **Ingress** — FastAPI API | `0.0.0.0:8000` |
-| `checkout-api` | Sidecar | `127.0.0.1:8081` |
-| `auth-service` | Sidecar | `127.0.0.1:8082` |
-| `payments-service` | Sidecar | `127.0.0.1:8083` |
-| `provider-service` | Sidecar | `127.0.0.1:8084` |
-| `prometheus` | Sidecar (ephemeral TSDB) | `127.0.0.1:9090` |
-| `otel-collector` | Sidecar | `127.0.0.1:4318` |
+| Container | Role | Listen | Client URL |
+|-----------|------|--------|------------|
+| `opspilot` | **Ingress** — FastAPI API | `0.0.0.0:8000` | public |
+| `checkout-api` | Sidecar | `0.0.0.0:8081` | `http://127.0.0.1:8081` |
+| `auth-service` | Sidecar | `0.0.0.0:8082` | `http://127.0.0.1:8082` |
+| `payments-service` | Sidecar | `0.0.0.0:8083` | `http://127.0.0.1:8083` |
+| `provider-service` | Sidecar | `0.0.0.0:8084` | `http://127.0.0.1:8084` |
+| `prometheus` | Sidecar (ephemeral TSDB) | `0.0.0.0:9090` | `http://127.0.0.1:9090` |
+| `otel-collector` | Sidecar | `0.0.0.0:4318` | `http://127.0.0.1:4318` |
 
+Only `opspilot` declares `ports:` / public ingress. Sidecar `0.0.0.0` binds are for
+Cloud Run probes + in-instance clients; they are not separate public services.
 ## Render before deploy
 
 `service.yaml.tmpl` is the checked-in template. **Do not edit image tags manually.**

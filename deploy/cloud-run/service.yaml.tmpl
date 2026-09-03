@@ -115,7 +115,7 @@ spec:
 
         - name: checkout-api
           image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
-          command: ["uvicorn", "sandbox.checkout.app:app", "--host", "127.0.0.1", "--port", "8081"]
+          command: ["uvicorn", "sandbox.checkout.app:app", "--host", "0.0.0.0", "--port", "8081"]
           resources:
             limits:
               cpu: "1"
@@ -144,7 +144,7 @@ spec:
 
         - name: auth-service
           image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
-          command: ["uvicorn", "sandbox.auth.app:app", "--host", "127.0.0.1", "--port", "8082"]
+          command: ["uvicorn", "sandbox.auth.app:app", "--host", "0.0.0.0", "--port", "8082"]
           resources:
             limits:
               cpu: "1"
@@ -168,7 +168,7 @@ spec:
 
         - name: payments-service
           image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
-          command: ["uvicorn", "sandbox.payments.app:app", "--host", "127.0.0.1", "--port", "8083"]
+          command: ["uvicorn", "sandbox.payments.app:app", "--host", "0.0.0.0", "--port", "8083"]
           resources:
             limits:
               cpu: "1"
@@ -194,7 +194,7 @@ spec:
 
         - name: provider-service
           image: {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/opspilot/sandbox:{{IMAGE_TAG}}
-          command: ["uvicorn", "sandbox.provider.app:app", "--host", "127.0.0.1", "--port", "8084"]
+          command: ["uvicorn", "sandbox.provider.app:app", "--host", "0.0.0.0", "--port", "8084"]
           resources:
             limits:
               cpu: "1"
@@ -221,7 +221,7 @@ spec:
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/tmp/prometheus
-            - --web.listen-address=127.0.0.1:9090
+            - --web.listen-address=0.0.0.0:9090
           resources:
             limits:
               cpu: "1"
