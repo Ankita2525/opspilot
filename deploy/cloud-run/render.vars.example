@@ -4,3 +4,12 @@ OPSPILOT_TURNSTILE_SITE_KEY=0x4AAAAAA-turnstile-site-key-placeholder
 OPSPILOT_LOKI_URL=https://logs-prod-XXX.grafana.net
 OPSPILOT_PUBLIC_DOMAIN=your-frontend.vercel.app
 GRAFANA_CLOUD_LOKI_ENDPOINT=https://logs-prod-XXX.grafana.net/loki/api/v1/push
+
+# Explicit Secret Manager versions (required). Do not use "latest".
+# Rotating a secret requires bumping the pin so Cloud Run creates a new revision.
+OPSPILOT_DATABASE_SECRET_VERSION=2
+OPSPILOT_GROQ_SECRET_VERSION=1
+OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION=1
+OPSPILOT_TURNSTILE_SECRET_VERSION=1
+OPSPILOT_GRAFANA_LOKI_SECRET_VERSION=1
+OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION=1

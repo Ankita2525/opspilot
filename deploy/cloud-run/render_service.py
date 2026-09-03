@@ -22,6 +22,12 @@ REQUIRED_PLACEHOLDERS = (
     "OPSPILOT_LOKI_URL",
     "GRAFANA_CLOUD_LOKI_ENDPOINT",
     "OPSPILOT_PUBLIC_DOMAIN",
+    "OPSPILOT_DATABASE_SECRET_VERSION",
+    "OPSPILOT_GROQ_SECRET_VERSION",
+    "OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION",
+    "OPSPILOT_TURNSTILE_SECRET_VERSION",
+    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION",
+    "OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION",
 )
 
 REQUIRED_SECRET_MANAGER_SECRETS = (
@@ -33,6 +39,18 @@ REQUIRED_SECRET_MANAGER_SECRETS = (
     "opspilot-prometheus-config",
 )
 
+# Render-var -> Secret Manager secret id.
+SECRET_VERSION_VARS: dict[str, str] = {
+    "OPSPILOT_DATABASE_SECRET_VERSION": "opspilot-database-url",
+    "OPSPILOT_GROQ_SECRET_VERSION": "opspilot-groq-api-key",
+    "OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION": "opspilot-sandbox-control-token",
+    "OPSPILOT_TURNSTILE_SECRET_VERSION": "opspilot-turnstile-secret",
+    "OPSPILOT_GRAFANA_LOKI_SECRET_VERSION": "opspilot-grafana-loki-authorization",
+    "OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION": "opspilot-prometheus-config",
+}
+
+NUMERIC_VERSION = re.compile(r"^[1-9][0-9]*$")
+SECRET_KEY_LATEST = re.compile(r"key:\s*['\"]?latest['\"]?\b")
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
 
@@ -47,6 +65,23 @@ def load_vars_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
     return values
+
+
+def validate_secret_versions(values: dict[str, str]) -> None:
+    for var_name, secret_name in SECRET_VERSION_VARS.items():
+        version = values.get(var_name, "").strip()
+        if not version:
+            raise ValueError(f"Missing required secret version: {var_name}")
+        if version.lower() == "latest":
+            raise ValueError(
+                f"{var_name} must be an explicit numeric Secret Manager version, "
+                f"not 'latest' (secret={secret_name})."
+            )
+        if not NUMERIC_VERSION.fullmatch(version):
+            raise ValueError(
+                f"{var_name} must be a positive integer version id, got {version!r} "
+                f"(secret={secret_name})."
+            )
 
 
 def build_otel_collector_config(grafana_loki_endpoint: str) -> str:
@@ -96,6 +131,8 @@ def render_service(
             + ". Supply via --vars-file or CLI flags."
         )
 
+    validate_secret_versions(values)
+
     otel_config = build_otel_collector_config(values["GRAFANA_CLOUD_LOKI_ENDPOINT"])
     values["OTEL_COLLECTOR_CONFIG_BLOCK"] = indent_yaml_block(otel_config, 16)
 
@@ -109,6 +146,11 @@ def render_service(
 
     if ":latest" in rendered:
         raise ValueError("Rendered manifest must not contain ':latest' image tags.")
+    if SECRET_KEY_LATEST.search(rendered):
+        raise ValueError(
+            "Rendered manifest must not use secretKeyRef/volume key 'latest'; "
+            "pin explicit numeric Secret Manager versions."
+        )
 
     return rendered
 

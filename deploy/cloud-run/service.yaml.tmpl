@@ -58,7 +58,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-grafana-loki-authorization
-                  key: latest
+                  key: "{{OPSPILOT_GRAFANA_LOKI_SECRET_VERSION}}"
             - name: CHECKOUT_API_URL
               value: http://127.0.0.1:8081
             - name: AUTH_SERVICE_URL
@@ -85,22 +85,22 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-database-url
-                  key: latest
+                  key: "{{OPSPILOT_DATABASE_SECRET_VERSION}}"
             - name: GROQ_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: opspilot-groq-api-key
-                  key: latest
+                  key: "{{OPSPILOT_GROQ_SECRET_VERSION}}"
             - name: SANDBOX_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
-                  key: latest
+                  key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
             - name: OPSPILOT_TURNSTILE_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: opspilot-turnstile-secret
-                  key: latest
+                  key: "{{OPSPILOT_TURNSTILE_SECRET_VERSION}}"
           startupProbe:
             httpGet:
               path: /ready
@@ -129,12 +129,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-database-url
-                  key: latest
+                  key: "{{OPSPILOT_DATABASE_SECRET_VERSION}}"
             - name: SANDBOX_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
-                  key: latest
+                  key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
           startupProbe:
             httpGet:
               path: /health
@@ -158,7 +158,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
-                  key: latest
+                  key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
           startupProbe:
             httpGet:
               path: /health
@@ -184,7 +184,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
-                  key: latest
+                  key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
           startupProbe:
             httpGet:
               path: /health
@@ -208,7 +208,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-sandbox-control-token
-                  key: latest
+                  key: "{{OPSPILOT_SANDBOX_TOKEN_SECRET_VERSION}}"
           startupProbe:
             httpGet:
               path: /health
@@ -252,7 +252,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: opspilot-grafana-loki-authorization
-                  key: latest
+                  key: "{{OPSPILOT_GRAFANA_LOKI_SECRET_VERSION}}"
           startupProbe:
             tcpSocket:
               port: 4318
@@ -265,5 +265,5 @@ spec:
           secret:
             secretName: opspilot-prometheus-config
             items:
-              - key: latest
+              - key: "{{OPSPILOT_PROMETHEUS_CONFIG_SECRET_VERSION}}"
                 path: prometheus.yml

@@ -149,6 +149,7 @@ def test_preflight_select_1_against_test_database() -> None:
 def test_readme_documents_pre_deploy_gate() -> None:
     text = README_PATH.read_text()
     assert "preflight_database.py" in text
+    assert "preflight_secret_pins.py" in text
     assert "--dry-run" in text
     assert "pytest" in text
     assert "No real Cloud Run deploy" in text
