@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "./api";
+import { incidentStartPayload } from "./api";
 import {
   consumeSseBuffer,
   IncidentStreamError,
@@ -17,19 +17,22 @@ const TERMINAL_EVENT_TYPES = new Set([
 
 export async function streamIncident(options: {
   scenarioId: string;
+  turnstileToken?: string | null;
   onEvent: (event: InvestigationEvent) => void;
   signal?: AbortSignal;
 }): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/incidents/stream`, {
+    response = await fetch("/api/incidents/stream", {
       method: "POST",
-      credentials: "include",
+      credentials: "same-origin",
       headers: {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ scenario_id: options.scenarioId }),
+      body: JSON.stringify(
+        incidentStartPayload(options.scenarioId, options.turnstileToken),
+      ),
       signal: options.signal,
     });
   } catch (cause) {

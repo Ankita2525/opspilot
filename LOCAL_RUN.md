@@ -12,7 +12,7 @@ In another terminal:
 
 ```bash
 cd frontend
-export NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+export OPSPILOT_API_TARGET=http://127.0.0.1:8000
 npm install
 npm run dev
 ```

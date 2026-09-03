@@ -386,6 +386,20 @@ body {
   margin-top: 1.15rem;
 }
 
+.turnstile-panel {
+  flex: 1 1 100%;
+}
+
+.turnstile-host {
+  min-height: 65px;
+}
+
+.turnstile-status {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .start-hint {
   margin: 0;
   color: var(--muted);

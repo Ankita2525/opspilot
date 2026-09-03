@@ -7,14 +7,21 @@ import type {
   Scenario,
 } from "@/lib/types";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+function apiPath(path: string): string {
+  if (path === "/health" || path === "/healthz") {
+    return "/api/health";
+  }
+  if (path === "/ready") {
+    return "/api/ready";
+  }
+  return path;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      credentials: "include",
+    response = await fetch(apiPath(path), {
+      credentials: "same-origin",
       ...init,
       headers: {
         Accept: "application/json",
@@ -58,11 +65,22 @@ export function getScenarios(): Promise<Scenario[]> {
 
 export function startIncident(
   scenarioId: string,
+  turnstileToken?: string | null,
 ): Promise<IncidentStartResponse> {
   return request<IncidentStartResponse>("/api/incidents/start", {
     method: "POST",
-    body: JSON.stringify({ scenario_id: scenarioId }),
+    body: JSON.stringify(incidentStartPayload(scenarioId, turnstileToken)),
   });
+}
+
+export function incidentStartPayload(
+  scenarioId: string,
+  turnstileToken?: string | null,
+): { scenario_id: string; turnstile_token?: string } {
+  if (turnstileToken) {
+    return { scenario_id: scenarioId, turnstile_token: turnstileToken };
+  }
+  return { scenario_id: scenarioId };
 }
 
 export function submitApproval(
@@ -109,9 +127,7 @@ export function getRuntimeSummary(): Promise<RuntimeSummary> {
 }
 
 export function getHealth(): Promise<{ status: string; service?: string }> {
-  // Prefer /health over /healthz: Google Frontend intercepts public /healthz
-  // with an HTML 404 before the request reaches Cloud Run containers.
-  return request<{ status: string; service?: string }>("/health");
+  return request<{ status: string; service?: string }>("/api/health");
 }
 
 /** @deprecated Use getHealth(); kept name briefly for call-site clarity in cold-start. */
@@ -124,7 +140,7 @@ export function getReadiness(): Promise<{
   degraded: boolean;
   checks?: Record<string, { ok: boolean; detail: string }>;
 }> {
-  return request("/ready");
+  return request("/api/ready");
 }
 
 export function getIncidentProvenance(incidentId: string): Promise<LiveProvenance> {
