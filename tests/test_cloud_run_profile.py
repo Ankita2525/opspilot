@@ -268,6 +268,19 @@ def test_backend_env_localhost_service_urls() -> None:
 
 
 def test_template_exists_and_is_not_committed_rendered_output() -> None:
+    """Rendered manifests may exist locally (gitignored) but must never be tracked."""
+    import subprocess
+
     assert TEMPLATE_PATH.is_file()
     rendered_dir = CLOUD_RUN_DIR / "rendered"
-    assert not (rendered_dir / "service.yaml").exists()
+    gitignore = CLOUD_RUN_DIR / ".gitignore"
+    assert gitignore.is_file()
+    assert "rendered/" in gitignore.read_text(encoding="utf-8")
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "--", "deploy/cloud-run/rendered"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    assert tracked == ""
+    # Local render artifacts are allowed on disk; only commits are forbidden.
+    _ = rendered_dir

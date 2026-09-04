@@ -48,6 +48,7 @@ class OpsPilotSettings(BaseModel):
     model_provider: ModelProviderKind
     groq_api_key: str | None = Field(default=None, repr=False)
     groq_model: str = DEFAULT_GROQ_MODEL
+    model_fallback: str | None = None
     database_url: str | None = Field(default=None, repr=False)
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
     telemetry_mode: TelemetryMode = TelemetryMode.REFERENCE
@@ -127,6 +128,7 @@ class OpsPilotSettings(BaseModel):
             model_provider=model_provider,
             groq_api_key=_optional(env.get("GROQ_API_KEY")),
             groq_model=env.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip(),
+            model_fallback=_optional(env.get("OPSPILOT_MODEL_FALLBACK")),
             database_url=_optional(env.get("DATABASE_URL")),
             cors_origins=env.get("OPSPILOT_CORS_ORIGINS", ",".join(DEFAULT_CORS_ORIGINS)),
             telemetry_mode=_parse_telemetry_mode(env.get("OPSPILOT_TELEMETRY_MODE", "reference")),
@@ -226,6 +228,7 @@ class OpsPilotSettings(BaseModel):
             return GroqModelProvider(
                 api_key=self.groq_api_key,
                 model=self.groq_model,
+                fallback_model=self.model_fallback,
             )
         return DeterministicModelProvider()
 

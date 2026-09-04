@@ -37,6 +37,7 @@ services:
       PAYMENTS_SERVICE_URL: http://payments-service:8083
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      OPSPILOT_MODEL_FALLBACK: ${OPSPILOT_MODEL_FALLBACK:-openai/gpt-oss-120b}
       DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
       OPSPILOT_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:

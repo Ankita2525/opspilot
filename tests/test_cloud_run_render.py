@@ -181,6 +181,7 @@ def test_backend_has_required_configuration() -> None:
         "OPSPILOT_MODEL_PROVIDER": "groq",
         "OPSPILOT_TELEMETRY_MODE": "live",
         "GROQ_MODEL": "openai/gpt-oss-20b",
+        "OPSPILOT_MODEL_FALLBACK": "openai/gpt-oss-120b",
         "OPSPILOT_PROMETHEUS_URL": "http://127.0.0.1:9090",
         "OPSPILOT_SESSION_COOKIE_SECURE": "true",
         "OPSPILOT_SESSION_COOKIE_SAMESITE": "none",

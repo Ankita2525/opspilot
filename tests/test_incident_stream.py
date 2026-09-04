@@ -344,6 +344,125 @@ def test_forced_hypothesis_failure_persists_failed_not_in_progress() -> None:
     assert any(item.event_type == "incident_failed" for item in audits)
 
 
+def test_stream_fallback_success_reaches_approval_required() -> None:
+    """20b json_validate_failed → 120b success → investigation continues."""
+    import json as json_lib
+    from unittest.mock import MagicMock
+
+    import groq
+
+    from backend.app.models.groq_provider import GroqModelProvider
+
+    sample = {
+        "hypotheses": [
+            {
+                "cause": "checkout connection pool regression after deployment",
+                "confidence": 0.91,
+                "evidence": [
+                    {"source_type": "metric", "summary": "p95 latency rose sharply"},
+                    {"source_type": "log", "summary": "connection pool exhausted"},
+                    {"source_type": "deployment", "summary": "v1.18.3 deployed"},
+                ],
+            }
+        ],
+        "recommended_action": "rollback_deployment",
+        "recommendation_summary": "Rollback checkout-api to the prior healthy revision.",
+        "reasoning_summary": "Latency and pool exhaustion began after the checkout revision change.",
+    }
+    client_mock = MagicMock()
+    response = MagicMock()
+    response.status_code = 400
+    response.headers = {}
+    primary_err = groq.BadRequestError(
+        message="bad request",
+        response=response,
+        body={
+            "error": {
+                "code": "json_validate_failed",
+                "type": "invalid_request_error",
+            }
+        },
+    )
+    message = type("M", (), {"content": json_lib.dumps(sample), "refusal": None})()
+    choice = type("C", (), {"message": message, "finish_reason": "stop"})()
+    completion = type("R", (), {"choices": [choice], "usage": None})()
+    client_mock.chat.completions.create.side_effect = [primary_err, completion]
+    provider = GroqModelProvider(
+        api_key="k",
+        client=client_mock,
+        model="openai/gpt-oss-20b",
+        fallback_model="openai/gpt-oss-120b",
+        max_attempts=3,
+        base_delay_seconds=0.01,
+    )
+    client, repo = _client(provider=provider)
+    events = _parse_sse(_stream(client).text)
+    assert client_mock.chat.completions.create.call_count == 2
+    models = [c.kwargs["model"] for c in client_mock.chat.completions.create.call_args_list]
+    assert models == ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+    assert events[-1]["event_type"] == "approval_required"
+    incident_id = events[0]["incident_id"]
+    record = repo.get_incident(incident_id)
+    assert record is not None
+    assert record.status == "approval_required"
+    meta = provider.last_generation_meta
+    assert meta is not None
+    assert meta.fallback_used is True
+    assert meta.final_model == "openai/gpt-oss-120b"
+
+
+def test_stream_both_models_fail_persists_failed_safely() -> None:
+    from unittest.mock import MagicMock
+
+    import groq
+
+    from backend.app.models.groq_provider import GroqModelProvider
+    from backend.app.models.provider_errors import ModelCallError
+
+    client_mock = MagicMock()
+    response = MagicMock()
+    response.status_code = 400
+    response.headers = {}
+
+    def _err():
+        return groq.BadRequestError(
+            message="bad request",
+            response=response,
+            body={
+                "error": {
+                    "code": "json_validate_failed",
+                    "type": "invalid_request_error",
+                }
+            },
+        )
+
+    client_mock.chat.completions.create.side_effect = [_err(), _err()]
+    provider = GroqModelProvider(
+        api_key="k",
+        client=client_mock,
+        model="openai/gpt-oss-20b",
+        fallback_model="openai/gpt-oss-120b",
+        max_attempts=3,
+        base_delay_seconds=0.01,
+    )
+    client, repo = _client(provider=provider)
+    response_http = _stream(client)
+    events = _parse_sse(response_http.text)
+    body = response_http.text
+    assert client_mock.chat.completions.create.call_count == 2
+    assert events[-1]["event_type"] == "incident_failed"
+    assert events[-1]["data"]["error"] == "diagnosis_unavailable"
+    incident_id = events[0]["incident_id"]
+    record = repo.get_incident(incident_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert "failed_generation" not in body
+    assert "You are OpsPilot" not in body
+    assert repo.get_provenance(incident_id) is None
+    assert provider.last_generation_meta is not None
+    assert provider.last_generation_meta.fallback_used is True
+
+
 def test_independent_streams_do_not_share_event_state() -> None:
     client, _ = _client()
     checkout = _parse_sse(_stream(client, CHECKOUT_ID).text)
