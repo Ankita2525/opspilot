@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
 from backend.app.sandbox.hardening import SandboxHardening
 from backend.app.sandbox.models import LeaseState
+from backend.app.sandbox.quarantine_recovery import (
+    SupportsAppendAudit,
+    recover_quarantined_sandbox,
+)
 from sandbox.control import SandboxControlClient
 from sandbox.scenarios import LIVE_SCENARIO_MAPPINGS, LiveScenarioMapping
 
@@ -69,14 +72,28 @@ def restore_baseline_for_scenario(scenario_id: str) -> tuple[bool, str]:
         return False, f"{mapping.affected_service}:{type(exc).__name__}"
 
 
-def safe_expire_stale_leases(hardening: SandboxHardening) -> dict[str, Any]:
+def safe_expire_stale_leases(
+    hardening: SandboxHardening,
+    *,
+    repository: SupportsAppendAudit | None = None,
+) -> dict[str, Any]:
     """Expire stale leases only after sandbox baseline is verified.
 
     Hard invariant: lease must never become IDLE while a controlled fault may
-    still be active.
+    still be active. Quarantined leases use the verifying recovery contract.
     """
     if hardening.lease_store.is_quarantined():
-        return {"state": "quarantined", "expired": 0}
+        result = recover_quarantined_sandbox(hardening, repository=repository)
+        return {
+            "state": "idle" if result.recovered else "quarantined",
+            "expired": 0,
+            "recovery": {
+                "recovered": result.recovered,
+                "attempt_count": result.attempt_count,
+                "transitioned": result.transitioned,
+                "failure_category": result.failure_category,
+            },
+        }
 
     peek = getattr(hardening.lease_store, "peek", None)
     lease = peek() if callable(peek) else hardening.lease_store.inspect()
@@ -94,7 +111,17 @@ def safe_expire_stale_leases(hardening: SandboxHardening) -> dict[str, Any]:
         }
 
     if lease.state is LeaseState.QUARANTINED:
-        return {"state": "quarantined", "expired": 0}
+        result = recover_quarantined_sandbox(hardening, repository=repository)
+        return {
+            "state": "idle" if result.recovered else "quarantined",
+            "expired": 0,
+            "recovery": {
+                "recovered": result.recovered,
+                "attempt_count": result.attempt_count,
+                "transitioned": result.transitioned,
+                "failure_category": result.failure_category,
+            },
+        }
 
     # Stale/expired active lease: clear faults BEFORE idling.
     ok, notes = restore_all_sandbox_baselines()

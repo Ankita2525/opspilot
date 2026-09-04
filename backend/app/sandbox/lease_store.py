@@ -44,7 +44,17 @@ class GlobalSandboxLeaseStore(Protocol):
 
     def is_quarantined(self) -> bool: ...
 
-    def clear_quarantine(self) -> bool: ...
+    def try_transition_quarantined_to_idle(
+        self,
+        *,
+        expected_incident_id: str | None,
+    ) -> bool:
+        """Conditional quarantined→idle after external baseline verification.
+
+        Returns True only when this call atomically transitioned the row.
+        Callers must never use this to bypass verification.
+        """
+        ...
 
 
 def _lease_from_row(row: dict[str, object]) -> GlobalSandboxLease | None:
@@ -309,7 +319,11 @@ class PostgresGlobalSandboxLeaseStore:
                 return False
             return str(row["state"]) == LeaseState.QUARANTINED.value
 
-    def clear_quarantine(self) -> bool:
+    def try_transition_quarantined_to_idle(
+        self,
+        *,
+        expected_incident_id: str | None,
+    ) -> bool:
         with psycopg.connect(self._database_url) as conn:
             with conn.transaction():
                 result = conn.execute(
@@ -318,13 +332,19 @@ class PostgresGlobalSandboxLeaseStore:
                     SET state = %s,
                         lease_id = NULL,
                         session_id = NULL,
-                        incident_id = NULL
-                    WHERE id = %s AND state = %s
+                        incident_id = NULL,
+                        acquired_at = NULL,
+                        expires_at = NULL,
+                        renewed_at = NULL
+                    WHERE id = %s
+                      AND state = %s
+                      AND incident_id IS NOT DISTINCT FROM %s
                     """,
                     (
                         LeaseState.IDLE.value,
                         SINGLETON_LEASE_ID,
                         LeaseState.QUARANTINED.value,
+                        expected_incident_id,
                     ),
                 )
                 return result.rowcount == 1
@@ -462,9 +482,15 @@ class InMemoryGlobalSandboxLeaseStore:
                 and self._lease.state is LeaseState.QUARANTINED
             )
 
-    def clear_quarantine(self) -> bool:
+    def try_transition_quarantined_to_idle(
+        self,
+        *,
+        expected_incident_id: str | None,
+    ) -> bool:
         with self._lock:
             if self._lease is None or self._lease.state is not LeaseState.QUARANTINED:
+                return False
+            if self._lease.incident_id != expected_incident_id:
                 return False
             self._lease = None
             return True

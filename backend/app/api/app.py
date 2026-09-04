@@ -135,7 +135,10 @@ def create_app(
         app.state.checkpointer = runtime.checkpointer
         runtime.ensure_production_checkpointer_configured()
         if resolved_hardening.enforce_live_guards:
-            safe_expire_stale_leases(resolved_hardening)
+            safe_expire_stale_leases(
+                resolved_hardening,
+                repository=resolved_repository,
+            )
             _reconcile_stale_incidents_on_startup()
             cleanup_worker = IncidentCleanupWorker(
                 lease_store=resolved_hardening.lease_store,
@@ -196,7 +199,10 @@ def create_app(
                     store.remove(incident_id)
                 except ValueError:
                     pass
-        safe_expire_stale_leases(resolved_hardening)
+        safe_expire_stale_leases(
+            resolved_hardening,
+            repository=resolved_repository,
+        )
 
     app = FastAPI(title="OpsPilot", lifespan=lifespan)
     app.add_middleware(
