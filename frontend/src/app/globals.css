@@ -920,6 +920,10 @@ body {
   grid-template-columns: 1fr;
 }
 
+.workspace-grid-solo > .investigation-panel {
+  max-width: 40rem;
+}
+
 .metric-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1063,8 +1067,12 @@ body {
 .hypothesis-cause {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 1.55rem;
-  letter-spacing: -0.03em;
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+  text-transform: none;
+  max-width: 34rem;
 }
 
 .hypothesis-confidence {
@@ -1161,7 +1169,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.7rem;
-  margin-top: 1rem;
+  align-items: flex-start;
 }
 
 .recovery-panel {
@@ -1994,6 +2002,21 @@ body {
   color: var(--text-muted);
 }
 
+.provenance-groups {
+  display: grid;
+  gap: 1rem 1.25rem;
+  grid-template-columns: 1fr;
+  margin: 0;
+  min-width: 0;
+}
+
+.provenance-group {
+  margin: 0;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
 .provenance-grid {
   margin: 0;
   display: grid;
@@ -2002,10 +2025,11 @@ body {
 
 .provenance-row {
   display: grid;
-  grid-template-columns: 11rem 1fr;
-  gap: 0.75rem;
-  padding: 0.45rem 0;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr);
+  gap: 0.55rem 0.75rem;
+  padding: 0.35rem 0;
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .provenance-row dt {
@@ -2600,6 +2624,24 @@ body {
   fill: var(--green);
 }
 
+.spark-hit-area {
+  fill: transparent;
+  stroke: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.spark-hit:hover .spark-point,
+.spark-hit:focus-within .spark-point {
+  r: 4.5;
+}
+
+.spark-hit:focus-within .spark-hit-area {
+  stroke: var(--blue);
+  stroke-width: 1;
+  stroke-opacity: 0.55;
+}
+
 .telemetry-trend-caption {
   margin: 0.25rem 0 0;
   font-size: 0.72rem;
@@ -2673,7 +2715,12 @@ body {
 
 .root-cause-panel .hypothesis-cause {
   margin: 0.45rem 0 0;
-  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+  font-size: clamp(1.2rem, 2vw, 1.45rem);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  line-height: 1.45;
+  text-transform: none;
+  max-width: 34rem;
 }
 
 .hypothesis-badge {
@@ -2708,6 +2755,21 @@ body {
   box-shadow:
     var(--shadow-panel),
     inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.approval-layout {
+  display: grid;
+  gap: 1.15rem;
+  max-width: 52rem;
+}
+
+.approval-copy {
+  min-width: 0;
+  max-width: 36rem;
+}
+
+.approval-layout .approval-actions {
+  margin-top: 0;
 }
 
 .approval-kicker {
@@ -2858,6 +2920,27 @@ body {
   .lifecycle-rail-active .lifecycle-rail-connector {
     background: rgba(59, 130, 246, 0.55);
   }
+
+  .provenance-groups {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .approval-layout {
+    grid-template-columns: minmax(0, 1.4fr) auto;
+    align-items: end;
+    max-width: 56rem;
+  }
+
+  .approval-layout .approval-actions {
+    flex-direction: column;
+    min-width: 11rem;
+  }
+}
+
+@media (min-width: 700px) and (max-width: 859px) {
+  .provenance-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -2871,6 +2954,11 @@ body {
 
   .recovery-compare {
     grid-template-columns: 1fr;
+  }
+
+  .provenance-row {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
   }
 }
 

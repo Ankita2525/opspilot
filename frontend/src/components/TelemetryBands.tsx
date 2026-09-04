@@ -58,55 +58,81 @@ function TrendSparkline({
   degraded: Window;
   recovery: Window;
 }) {
-  const points: number[] = [];
+  const labeled: Array<{ label: string; value: number }> = [];
   if (baseline) {
-    points.push(baseline.p95_latency_ms);
+    labeled.push({ label: "Baseline", value: baseline.p95_latency_ms });
   }
   if (degraded) {
-    points.push(degraded.p95_latency_ms);
+    labeled.push({ label: "Degraded", value: degraded.p95_latency_ms });
   }
   if (recovery) {
-    points.push(recovery.p95_latency_ms);
+    labeled.push({ label: "Recovery", value: recovery.p95_latency_ms });
   }
-  if (points.length < 2) {
+  if (labeled.length < 2) {
     return null;
   }
 
   const width = 220;
   const height = 48;
   const pad = 4;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
+  const values = labeled.map((item) => item.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const span = Math.max(max - min, 1);
-  const coords = points.map((value, index) => {
+  const coords = labeled.map((item, index) => {
     const x =
-      pad + (index * (width - pad * 2)) / Math.max(points.length - 1, 1);
-    const y = height - pad - ((value - min) / span) * (height - pad * 2);
-    return `${x},${y}`;
+      pad + (index * (width - pad * 2)) / Math.max(labeled.length - 1, 1);
+    const y = height - pad - ((item.value - min) / span) * (height - pad * 2);
+    return { ...item, x, y };
   });
 
   return (
-    <div className="telemetry-trend" aria-label="p95 trend across collected windows">
-      <p className="telemetry-trend-label">p95 across collected windows</p>
+    <div className="telemetry-trend">
+      <p className="telemetry-trend-label" id="telemetry-trend-label">
+        p95 across collected windows
+      </p>
       <svg
         className="telemetry-sparkline"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-hidden="true"
+        aria-labelledby="telemetry-trend-label"
       >
+        <title>p95 across collected windows</title>
         <polyline
-          points={coords.join(" ")}
+          points={coords.map((point) => `${point.x},${point.y}`).join(" ")}
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
         />
-        {coords.map((point, index) => {
-          const [x, y] = point.split(",").map(Number);
-          return <circle key={point} cx={x} cy={y} r="3.2" className={`spark-point spark-point-${index}`} />;
-        })}
+        {coords.map((point, index) => (
+          <g key={point.label} className="spark-hit">
+            <circle
+              cx={point.x}
+              cy={point.y}
+              r="8"
+              className="spark-hit-area"
+              tabIndex={0}
+              role="img"
+              aria-label={`${point.label}: ${formatLatency(point.value)}`}
+            >
+              <title>
+                {point.label}: {formatLatency(point.value)}
+              </title>
+            </circle>
+            <circle
+              cx={point.x}
+              cy={point.y}
+              r="3.2"
+              className={`spark-point spark-point-${index}`}
+              aria-hidden="true"
+            />
+          </g>
+        ))}
       </svg>
       <p className="telemetry-trend-caption type-mono">
-        {points.map((value) => formatLatency(value)).join(" → ")}
+        {coords
+          .map((point) => `${point.label} ${formatLatency(point.value)}`)
+          .join(" → ")}
       </p>
     </div>
   );

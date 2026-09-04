@@ -208,7 +208,6 @@ export default function IncidentQaPage() {
             <InvestigationTimeline steps={STEPS} skills={SKILLS} />
             <HypothesisPanel
               hypothesis={HYPOTHESIS}
-              skills={SKILLS}
               evidenceCount={6}
             />
           </div>

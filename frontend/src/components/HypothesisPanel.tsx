@@ -6,13 +6,11 @@ import {
 
 type HypothesisPanelProps = {
   hypothesis: LiveHypothesis;
-  skills?: string[];
   evidenceCount?: number;
 };
 
 export function HypothesisPanel({
   hypothesis,
-  skills = [],
   evidenceCount,
 }: HypothesisPanelProps) {
   const unsupported = hypothesis.recommendedAction === NO_SUPPORTED_ACTION;
@@ -46,18 +44,6 @@ export function HypothesisPanel({
           </p>
         ) : null}
       </div>
-      {skills.length > 0 ? (
-        <div className="skills-block">
-          <p className="skills-heading">Diagnostic skills</p>
-          <ul className="skills-list">
-            {skills.map((skill) => (
-              <li key={skill} className="skill-chip">
-                {skill}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
       {unsupported ? (
         <p className="hypothesis-outcome">
           Investigation complete. No supported automated remediation was

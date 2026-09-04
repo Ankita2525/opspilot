@@ -576,7 +576,6 @@ export default function Home() {
               {live.hypothesis ? (
                 <HypothesisPanel
                   hypothesis={live.hypothesis}
-                  skills={live.selectedSkills}
                   evidenceCount={live.evidence.length}
                 />
               ) : null}
