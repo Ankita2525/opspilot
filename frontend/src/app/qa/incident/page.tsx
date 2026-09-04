@@ -179,11 +179,13 @@ export default function IncidentQaPage() {
               recovery={null}
             />
           </div>
-          <InvestigationTimeline
-            steps={RUNNING_STEPS}
-            skills={[]}
-            symptomSummary="Checkout p95 and error rate rose after revision v1.18.3."
-          />
+          <div className="workspace-grid workspace-grid-solo">
+            <InvestigationTimeline
+              steps={RUNNING_STEPS}
+              skills={[]}
+              symptomSummary="Checkout p95 and error rate rose after revision v1.18.3."
+            />
+          </div>
         </FixtureShell>
 
         <FixtureShell title="B — Awaiting approval">
