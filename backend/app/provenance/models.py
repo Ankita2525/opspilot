@@ -28,6 +28,11 @@ class DiagnosisProvenance(BaseModel):
     model: str | None = None
     evidence_count: int = Field(ge=0)
     generated_at: datetime | None = None
+    primary_model_attempted: str | None = None
+    fallback_used: bool = False
+    fallback_model: str | None = None
+    fallback_reason: str | None = None
+    final_model: str | None = None
 
 
 class RemediationProvenance(BaseModel):

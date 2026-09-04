@@ -66,6 +66,7 @@ from backend.app.events.emitter import InvestigationEventEmitter
 from backend.app.ids import new_incident_id
 from backend.app.live.orchestrator import LiveIncidentOrchestrator
 from backend.app.live.reconcile import LiveSessionReconciler
+from backend.app.models.generation_meta import generation_meta_from_provider
 from backend.app.models.groq_provider import GroqModelProvider
 from backend.app.models.provider import ModelProvider
 from backend.app.observability.tracing import get_tracer
@@ -375,12 +376,28 @@ def create_app(
             evidence_count = len(live_session.observed_logs) + (
                 1 if live_session.degraded_summary.get("request_count") else 0
             )
+            gen_meta = generation_meta_from_provider(runtime.provider)
             provenance_store.save_after_investigation(
                 live_session=live_session,
                 started=started,
-                model_provider=_model_provider_label(resolved_settings),
-                model_name=_model_name(resolved_settings),
+                model_provider=(
+                    gen_meta.provider
+                    if gen_meta is not None
+                    else _model_provider_label(resolved_settings)
+                ),
+                model_name=(
+                    gen_meta.final_model
+                    if gen_meta is not None
+                    else _model_name(resolved_settings)
+                ),
                 evidence_count=evidence_count,
+                primary_model_attempted=(
+                    gen_meta.primary_model if gen_meta is not None else None
+                ),
+                fallback_used=bool(gen_meta.fallback_used) if gen_meta else False,
+                fallback_model=gen_meta.fallback_model if gen_meta else None,
+                fallback_reason=gen_meta.fallback_reason if gen_meta else None,
+                final_model=gen_meta.final_model if gen_meta else None,
             )
         store.put(
             incident_id,

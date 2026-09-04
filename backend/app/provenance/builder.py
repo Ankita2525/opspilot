@@ -117,6 +117,11 @@ def build_live_provenance(
     executed_at: datetime | None = None,
     recovery_result: dict[str, Any] | None = None,
     remediation_at: datetime | None = None,
+    primary_model_attempted: str | None = None,
+    fallback_used: bool = False,
+    fallback_model: str | None = None,
+    fallback_reason: str | None = None,
+    final_model: str | None = None,
 ) -> LiveRunProvenance:
     return LiveRunProvenance(
         run_id=incident_id,
@@ -130,9 +135,14 @@ def build_live_provenance(
         degraded=window_from_samples(degraded_samples, degraded_summary),
         diagnosis=DiagnosisProvenance(
             provider=diagnosis_provider,
-            model=diagnosis_model,
+            model=final_model or diagnosis_model,
             evidence_count=evidence_count,
             generated_at=diagnosis_generated_at or datetime.now(UTC),
+            primary_model_attempted=primary_model_attempted or diagnosis_model,
+            fallback_used=fallback_used,
+            fallback_model=fallback_model,
+            fallback_reason=fallback_reason,
+            final_model=final_model or diagnosis_model,
         ),
         remediation=RemediationProvenance(
             typed_action=remediation_action,

@@ -55,6 +55,11 @@ class ProvenanceStore:
         model_provider: str,
         model_name: str | None,
         evidence_count: int,
+        primary_model_attempted: str | None = None,
+        fallback_used: bool = False,
+        fallback_model: str | None = None,
+        fallback_reason: str | None = None,
+        final_model: str | None = None,
     ) -> LiveRunProvenance:
         provenance = build_live_provenance(
             incident_id=live_session.incident_id,
@@ -71,6 +76,11 @@ class ProvenanceStore:
             evidence_count=evidence_count,
             remediation_action=started.recommended_action,
             approval_required=started.status == "approval_required",
+            primary_model_attempted=primary_model_attempted,
+            fallback_used=fallback_used,
+            fallback_model=fallback_model,
+            fallback_reason=fallback_reason,
+            final_model=final_model,
         )
         return self._persist(with_manifest_hash(provenance))
 

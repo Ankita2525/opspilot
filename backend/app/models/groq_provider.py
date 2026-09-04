@@ -13,6 +13,7 @@ import groq
 from groq import Groq
 from pydantic import BaseModel, ValidationError
 
+from backend.app.models.generation_meta import StructuredGenerationMeta
 from backend.app.models.provider_errors import (
     ModelCallError,
     ProviderErrorCategory,
@@ -20,6 +21,9 @@ from backend.app.models.provider_errors import (
 )
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_GROQ_FALLBACK_MODEL = "openai/gpt-oss-120b"
+STRICT_FALLBACK_SOURCE_MODEL = "openai/gpt-oss-20b"
+STRICT_FALLBACK_PROVIDER_CODE = "json_validate_failed"
 MAX_HTTP_ATTEMPTS = 3
 DEFAULT_BASE_DELAY_SECONDS = 0.5
 DEFAULT_MAX_DELAY_SECONDS = 8.0
@@ -28,22 +32,30 @@ logger = logging.getLogger(__name__)
 
 
 class GroqModelProvider:
-    """Groq-backed ModelProvider using strict JSON Schema structured outputs."""
+    """Groq-backed ModelProvider using strict JSON Schema structured outputs.
+
+    On the exact proven Groq defect (20b + strict json_schema + HTTP 400 +
+    json_validate_failed), performs one model-diverse fallback to the configured
+    fallback model (default 120b). No same-model retry for that signature.
+    """
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str = DEFAULT_GROQ_MODEL,
         *,
+        fallback_model: str | None = None,
         client: Groq | None = None,
         max_attempts: int = MAX_HTTP_ATTEMPTS,
         base_delay_seconds: float = DEFAULT_BASE_DELAY_SECONDS,
         max_delay_seconds: float = DEFAULT_MAX_DELAY_SECONDS,
     ) -> None:
         self.model = model
+        self.fallback_model = (fallback_model or "").strip() or None
         self._max_attempts = max(1, max_attempts)
         self._base_delay_seconds = base_delay_seconds
         self._max_delay_seconds = max_delay_seconds
+        self.last_generation_meta: StructuredGenerationMeta | None = None
         if client is not None:
             self._client = client
             return
@@ -64,6 +76,126 @@ class GroqModelProvider:
         stage: str | None = None,
         incident_id: str | None = None,
     ) -> T:
+        response_format = _strict_response_format(response_model)
+        try:
+            result = self._generate_with_retries(
+                system_prompt,
+                user_prompt,
+                response_model,
+                model=self.model,
+                response_format=response_format,
+                stage=stage,
+                incident_id=incident_id,
+            )
+        except ModelCallError as primary_exc:
+            if not self._should_strict_model_fallback(primary_exc, response_format):
+                self.last_generation_meta = StructuredGenerationMeta(
+                    provider="groq",
+                    primary_model=self.model,
+                    final_model=self.model,
+                    fallback_used=False,
+                )
+                logger.warning(
+                    "model_call_failed %s",
+                    json.dumps(primary_exc.meta.safe_log_dict(), sort_keys=True),
+                )
+                raise
+            assert self.fallback_model is not None
+            self._log_fallback_event(
+                "primary_model_failed",
+                stage=stage,
+                incident_id=incident_id,
+                primary_model=self.model,
+                fallback_model=self.fallback_model,
+                http_status=primary_exc.meta.http_status,
+                provider_code=primary_exc.meta.provider_code,
+                logical_invocation=1,
+            )
+            self._log_fallback_event(
+                "fallback_model_started",
+                stage=stage,
+                incident_id=incident_id,
+                primary_model=self.model,
+                fallback_model=self.fallback_model,
+                http_status=primary_exc.meta.http_status,
+                provider_code=primary_exc.meta.provider_code,
+                logical_invocation=2,
+            )
+            try:
+                # Prefer a single HTTP attempt for the model-diverse fallback.
+                result = self._generate_once(
+                    system_prompt,
+                    user_prompt,
+                    response_model,
+                    model=self.fallback_model,
+                    response_format=response_format,
+                    attempt=1,
+                    stage=stage,
+                    incident_id=incident_id,
+                )
+            except ModelCallError as fallback_exc:
+                self._log_fallback_event(
+                    "fallback_model_failed",
+                    stage=stage,
+                    incident_id=incident_id,
+                    primary_model=self.model,
+                    fallback_model=self.fallback_model,
+                    http_status=fallback_exc.meta.http_status,
+                    provider_code=fallback_exc.meta.provider_code,
+                    logical_invocation=2,
+                )
+                self.last_generation_meta = StructuredGenerationMeta(
+                    provider="groq",
+                    primary_model=self.model,
+                    final_model=self.fallback_model,
+                    fallback_used=True,
+                    fallback_model=self.fallback_model,
+                    fallback_reason=STRICT_FALLBACK_PROVIDER_CODE,
+                )
+                logger.warning(
+                    "model_call_failed %s",
+                    json.dumps(fallback_exc.meta.safe_log_dict(), sort_keys=True),
+                )
+                raise
+            self._log_fallback_event(
+                "fallback_model_succeeded",
+                stage=stage,
+                incident_id=incident_id,
+                primary_model=self.model,
+                fallback_model=self.fallback_model,
+                http_status=None,
+                provider_code=STRICT_FALLBACK_PROVIDER_CODE,
+                logical_invocation=2,
+            )
+            self.last_generation_meta = StructuredGenerationMeta(
+                provider="groq",
+                primary_model=self.model,
+                final_model=self.fallback_model,
+                fallback_used=True,
+                fallback_model=self.fallback_model,
+                fallback_reason=STRICT_FALLBACK_PROVIDER_CODE,
+            )
+            return result
+
+        self.last_generation_meta = StructuredGenerationMeta(
+            provider="groq",
+            primary_model=self.model,
+            final_model=self.model,
+            fallback_used=False,
+        )
+        return result
+
+    def _generate_with_retries[T: BaseModel](
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[T],
+        *,
+        model: str,
+        response_format: dict[str, Any],
+        stage: str | None,
+        incident_id: str | None,
+    ) -> T:
         last_error: ModelCallError | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
@@ -71,6 +203,8 @@ class GroqModelProvider:
                     system_prompt,
                     user_prompt,
                     response_model,
+                    model=model,
+                    response_format=response_format,
                     attempt=attempt,
                     stage=stage,
                     incident_id=incident_id,
@@ -78,10 +212,6 @@ class GroqModelProvider:
             except ModelCallError as exc:
                 last_error = exc
                 if not exc.retryable or attempt >= self._max_attempts:
-                    logger.warning(
-                        "model_call_failed %s",
-                        json.dumps(exc.meta.safe_log_dict(), sort_keys=True),
-                    )
                     raise
                 delay = self._backoff_seconds(attempt, exc.meta.retry_after_seconds)
                 logger.info(
@@ -98,31 +228,74 @@ class GroqModelProvider:
         assert last_error is not None
         raise last_error
 
+    def _should_strict_model_fallback(
+        self,
+        exc: ModelCallError,
+        response_format: dict[str, Any],
+    ) -> bool:
+        if self.fallback_model is None:
+            return False
+        if self.fallback_model == self.model:
+            return False
+        if self.model != STRICT_FALLBACK_SOURCE_MODEL:
+            return False
+        if response_format.get("type") != "json_schema":
+            return False
+        json_schema = response_format.get("json_schema")
+        if not isinstance(json_schema, dict) or json_schema.get("strict") is not True:
+            return False
+        if exc.meta.http_status != 400:
+            return False
+        if exc.meta.provider_code != STRICT_FALLBACK_PROVIDER_CODE:
+            return False
+        return True
+
+    def _log_fallback_event(
+        self,
+        event: str,
+        *,
+        stage: str | None,
+        incident_id: str | None,
+        primary_model: str,
+        fallback_model: str,
+        http_status: int | None,
+        provider_code: str | None,
+        logical_invocation: int,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "event": event,
+            "stage": stage,
+            "incident_id": incident_id,
+            "primary_model": primary_model,
+            "fallback_model": fallback_model,
+            "logical_invocation": logical_invocation,
+        }
+        if http_status is not None:
+            payload["http_status"] = http_status
+        if provider_code:
+            payload["provider_code"] = provider_code
+        logger.info("model_fallback %s", json.dumps(payload, sort_keys=True))
+
     def _generate_once[T: BaseModel](
         self,
         system_prompt: str,
         user_prompt: str,
         response_model: type[T],
         *,
+        model: str,
+        response_format: dict[str, Any],
         attempt: int,
         stage: str | None,
         incident_id: str | None,
     ) -> T:
         try:
             response = self._client.chat.completions.create(
-                model=self.model,
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": _schema_name(response_model),
-                        "strict": True,
-                        "schema": groq_strict_schema(response_model.model_json_schema()),
-                    },
-                },
+                response_format=response_format,
                 include_reasoning=False,
             )
         except Exception as exc:
@@ -199,6 +372,17 @@ class GroqModelProvider:
             self._base_delay_seconds * (2 ** (attempt - 1)),
         )
         return delay + random.uniform(0, delay * 0.25)
+
+
+def _strict_response_format(response_model: type[BaseModel]) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": _schema_name(response_model),
+            "strict": True,
+            "schema": groq_strict_schema(response_model.model_json_schema()),
+        },
+    }
 
 
 def groq_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
