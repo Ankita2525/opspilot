@@ -65,7 +65,7 @@ export function IncidentHeader({
         </div>
         {revision ? (
           <div>
-            <dt>Revision</dt>
+            <dt>{phase === "resolved" ? "Current revision" : "Incident revision"}</dt>
             <dd>
               <code>{revision}</code>
             </dd>

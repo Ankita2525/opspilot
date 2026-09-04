@@ -921,7 +921,16 @@ body {
 }
 
 .workspace-grid-solo > .investigation-panel {
-  max-width: 40rem;
+  width: 100%;
+  max-width: none;
+}
+
+@media (min-width: 1025px) {
+  .workspace-grid-solo > .investigation-panel {
+    justify-self: start;
+    width: min(42rem, 58%);
+    max-width: 42rem;
+  }
 }
 
 .metric-card {
@@ -2774,7 +2783,8 @@ body {
 .approval-layout .approval-actions {
   margin-top: 0;
   flex: 0 0 auto;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
 }
 
 .approval-kicker {

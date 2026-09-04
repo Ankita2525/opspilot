@@ -53,7 +53,7 @@ export function LiveProvenancePanel({ provenance, loading }: Props) {
             {row("Service", provenance.service, true)}
           </dl>
           <dl className="provenance-group">
-            {row("Revision", provenance.service_revision, true)}
+            {row("Incident revision", provenance.service_revision, true)}
             {row("Diagnosis provider", provenance.diagnosis?.provider ?? null)}
             {row("Model", provenance.diagnosis?.model ?? null, true)}
             {extended?.fallback_used
