@@ -132,19 +132,19 @@ describe("lifecycleSteps", () => {
     assert.equal(steps.find((step) => step.id === "failed")?.state, "failed");
   });
 
-  it("incident_started then incident_failed still uses Failed lifecycle", () => {
+  it("post-approval verification failure does not mark approval failed", () => {
     const steps = lifecycleSteps({
       phase: "failed",
       hasBaseline: true,
-      hasHypothesis: false,
-      hasApproval: false,
+      hasHypothesis: true,
+      hasApproval: true,
       resolved: false,
-      failureStage: "generate_hypothesis",
+      remediationExecuted: true,
+      failureStage: "verification",
     });
-    assert.equal(
-      steps.find((step) => step.id === "investigation")?.state,
-      "failed",
-    );
+    assert.equal(steps.find((step) => step.id === "approval")?.state, "done");
+    assert.equal(steps.find((step) => step.id === "rollback")?.state, "done");
+    assert.equal(steps.find((step) => step.id === "recovery")?.state, "failed");
     assert.notEqual(
       steps.find((step) => step.id === "approval")?.state,
       "failed",
@@ -159,6 +159,18 @@ describe("resolveLifecycleFailureAnchor", () => {
         hasBaseline: false,
         hasHypothesis: false,
         hasApproval: false,
+      }),
+      "failed",
+    );
+  });
+
+  it("maps verification stage to generic failed, not approval", () => {
+    assert.equal(
+      resolveLifecycleFailureAnchor({
+        hasBaseline: true,
+        hasHypothesis: true,
+        hasApproval: true,
+        failureStage: "verification",
       }),
       "failed",
     );

@@ -3,8 +3,13 @@ import {
   incidentPhaseTone,
   type Phase,
 } from "@/lib/command-center";
+import {
+  approvalTerminalKind,
+  incidentHeaderSummaryForApproval,
+} from "@/lib/approval-outcome";
 import { humanizeServiceName } from "@/lib/labels";
 import { incidentRevisionMetaLabel } from "@/lib/provenance-display";
+import type { IncidentApprovalResponse } from "@/lib/types";
 
 type IncidentPhase =
   | "investigating"
@@ -22,6 +27,7 @@ type IncidentHeaderProps = {
   telemetryMode?: string | null;
   eventCount?: number;
   revision?: string | null;
+  approvalResult?: IncidentApprovalResponse | null;
 };
 
 const PHASE_SUMMARY: Record<IncidentPhase, string> = {
@@ -43,10 +49,19 @@ export function IncidentHeader({
   telemetryMode = null,
   eventCount,
   revision = null,
+  approvalResult = null,
 }: IncidentHeaderProps) {
   const tone = incidentPhaseTone(phase as Phase);
   const liveSandbox =
     telemetryMode === "live" ? "LIVE SANDBOX" : live ? "LIVE" : null;
+  const kind = approvalResult ? approvalTerminalKind(approvalResult) : null;
+  const summary =
+    incidentHeaderSummaryForApproval(phase as Phase, approvalResult) ??
+    PHASE_SUMMARY[phase];
+  const phaseLabel =
+    kind === "approved_unverified"
+      ? "RECOVERY UNVERIFIED"
+      : incidentPhaseLabel(phase as Phase);
 
   return (
     <header className={`incident-command incident-command-${tone}`}>
@@ -55,7 +70,7 @@ export function IncidentHeader({
           {humanizeServiceName(service)}
         </p>
         <h1 className="incident-command-title">{title}</h1>
-        <p className="incident-command-summary">{PHASE_SUMMARY[phase]}</p>
+        <p className="incident-command-summary">{summary}</p>
       </div>
       <dl className="incident-command-meta">
         <div>
@@ -75,7 +90,7 @@ export function IncidentHeader({
         <div>
           <dt>Phase</dt>
           <dd className={`incident-phase-pill incident-phase-${tone}`}>
-            {incidentPhaseLabel(phase as Phase)}
+            {phaseLabel}
           </dd>
         </div>
         {liveSandbox ? (

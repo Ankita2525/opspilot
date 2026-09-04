@@ -75,6 +75,15 @@ export function resolveLifecycleFailureAnchor(input: {
   ) {
     return "approval";
   }
+  // Post-approval verification/recovery failure — do not mark approval failed.
+  if (
+    stage === "verification" ||
+    stage === "recovery" ||
+    stage === "remediation" ||
+    stage === "remediation_failed"
+  ) {
+    return "failed";
+  }
   if (
     stage === "generate_hypothesis" ||
     stage === "diagnosis" ||
@@ -107,6 +116,8 @@ export function lifecycleSteps(input: {
   hasHypothesis: boolean;
   hasApproval: boolean;
   resolved: boolean;
+  /** Approved remediation ran but recovery may be unverified */
+  remediationExecuted?: boolean;
   failureStage?: string | null;
 }): LifecycleStep[] {
   const failed = input.phase === "failed";
@@ -123,6 +134,7 @@ export function lifecycleSteps(input: {
     (input.phase === "investigating" ||
       (input.hasBaseline && !input.hasHypothesis));
   const awaitingApproval = input.phase === "active" && input.hasApproval;
+  const remediationDone = input.resolved || Boolean(input.remediationExecuted);
 
   const steps: LifecycleStep[] = [
     {
@@ -177,7 +189,9 @@ export function lifecycleSteps(input: {
           ? "failed"
           : awaitingApproval
             ? "active"
-            : input.phase === "resolved" || input.phase === "rejected"
+            : input.phase === "resolved" ||
+                input.phase === "rejected" ||
+                remediationDone
               ? "done"
               : input.hasApproval
                 ? "done"
@@ -187,7 +201,7 @@ export function lifecycleSteps(input: {
     {
       id: "rollback",
       label: "Rollback",
-      state: input.resolved
+      state: remediationDone
         ? "done"
         : input.phase === "rejected"
           ? "failed"
@@ -197,7 +211,11 @@ export function lifecycleSteps(input: {
     {
       id: "recovery",
       label: "Recovery verified",
-      state: input.resolved ? "done" : "pending",
+      state: input.resolved
+        ? "done"
+        : remediationDone && failed
+          ? "failed"
+          : "pending",
       tone: "recovery",
     },
   ];

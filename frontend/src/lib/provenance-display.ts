@@ -31,14 +31,18 @@ export function humanApprovalLabel(input: {
   phase?: string | null;
 }): HumanApprovalLabel {
   const status = (input.approvalStatus ?? "").toLowerCase();
-  if (input.phase === "rejected" || status === "rejected") {
+  // Prefer explicit approval outcome over phase — phase may mean recovery
+  // failed after an approved rollback (not a human rejection).
+  if (status === "rejected") {
     return "REJECTED";
   }
-  if (
-    input.phase === "resolved" ||
-    status === "approved" ||
-    Boolean(input.approvedAt)
-  ) {
+  if (status === "approved" || Boolean(input.approvedAt)) {
+    return "APPROVED";
+  }
+  if (input.phase === "rejected") {
+    return "REJECTED";
+  }
+  if (input.phase === "resolved") {
     return "APPROVED";
   }
   if (input.approvalRequired) {

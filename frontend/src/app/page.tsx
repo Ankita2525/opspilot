@@ -37,6 +37,11 @@ import {
   type LiveIncidentState,
 } from "@/lib/live-incident";
 import {
+  approvalStateBelongsToIncident,
+  approvalTerminalKind,
+  phaseFromApprovalResponse,
+} from "@/lib/approval-outcome";
+import {
   provenanceMatchesIncident,
   selectRenderableProvenance,
 } from "@/lib/provenance-display";
@@ -362,15 +367,24 @@ export default function Home() {
     if (!live?.incidentId) {
       return;
     }
+    const incidentId = live.incidentId;
+    const generation = generationRef.current;
     setError(null);
     setRetryAction(approved ? "approve" : "reject");
     setBusy(true);
     try {
-      const result = await submitApproval(live.incidentId, approved);
+      const result = await submitApproval(incidentId, approved);
+      if (generation !== generationRef.current) {
+        return;
+      }
+      // Ignore responses that do not belong to the active incident.
+      if (!approvalStateBelongsToIncident(result.incident_id, incidentId)) {
+        return;
+      }
       setApproval(result);
-      setPhase(result.status === "resolved" ? "resolved" : "rejected");
+      setPhase(phaseFromApprovalResponse(result));
       if (telemetryMode === "live") {
-        await loadProvenance(live.incidentId, generationRef.current);
+        await loadProvenance(incidentId, generationRef.current);
       }
     } catch (cause) {
       setError(
@@ -496,6 +510,7 @@ export default function Home() {
     telemetryMode,
     investigating: phase === "investigating",
   });
+  const approvalKind = approval ? approvalTerminalKind(approval) : null;
   const topologyPhase =
     phase === "resolved"
       ? "rollback"
@@ -538,6 +553,7 @@ export default function Home() {
               activeProvenance?.service_revision ??
               null
             }
+            approvalResult={approval}
           />
         ) : null}
 
@@ -685,7 +701,13 @@ export default function Home() {
                 hasHypothesis: Boolean(live.hypothesis),
                 hasApproval: Boolean(live.approval),
                 resolved: phase === "resolved",
-                failureStage: live.failureStage,
+                remediationExecuted:
+                  approvalKind === "approved_unverified" &&
+                  approval?.execution_success === true,
+                failureStage:
+                  approvalKind === "approved_unverified"
+                    ? "verification"
+                    : live.failureStage,
               })}
             />
             <div className="incident-ops-grid">
@@ -747,7 +769,9 @@ export default function Home() {
 
             {approval &&
             originalMetrics &&
-            (phase === "resolved" || phase === "rejected") ? (
+            (phase === "resolved" ||
+              phase === "rejected" ||
+              (phase === "failed" && approvalKind === "approved_unverified")) ? (
               <RecoveryPanel
                 original={originalMetrics}
                 approval={approval}
@@ -775,7 +799,8 @@ export default function Home() {
 
             {phase === "resolved" ||
             phase === "rejected" ||
-            phase === "complete" ? (
+            phase === "complete" ||
+            (phase === "failed" && approvalKind === "approved_unverified") ? (
               <div className="reset-row">
                 <button
                   type="button"

@@ -1,4 +1,5 @@
 import { formatErrorRate, formatLatency } from "@/lib/labels";
+import { approvalTerminalKind } from "@/lib/approval-outcome";
 import type { IncidentApprovalResponse, Metrics } from "@/lib/types";
 
 type RecoveryPanelProps = {
@@ -12,7 +13,9 @@ export function RecoveryPanel({
   approval,
   freshTelemetryVerified = null,
 }: RecoveryPanelProps) {
-  if (approval.status === "resolved") {
+  const kind = approvalTerminalKind(approval);
+
+  if (kind === "resolved") {
     const hasAfter =
       approval.recovered_p95_latency_ms !== null &&
       approval.recovered_p95_latency_ms !== undefined;
@@ -67,6 +70,25 @@ export function RecoveryPanel({
     );
   }
 
+  if (kind === "approved_unverified") {
+    return (
+      <section
+        className="panel recovery-panel recovery-panel-verifying"
+        aria-labelledby="recovery-heading"
+      >
+        <p className="type-kicker">Rollback executed</p>
+        <h2 id="recovery-heading" className="recovery-title">
+          Recovery not verified
+        </h2>
+        <p className="recovery-lead">
+          Approved remediation ran for {original.service}. Fresh post-action
+          health checks did not confirm full recovery.
+        </p>
+        <p className="recovery-fresh type-mono">Fresh telemetry UNVERIFIED</p>
+      </section>
+    );
+  }
+
   return (
     <section
       className="panel recovery-panel rejected"
@@ -78,8 +100,8 @@ export function RecoveryPanel({
       </h2>
       <p className="recovery-lead">
         {original.service} remains degraded at{" "}
-        {formatLatency(original.p95_latency_ms)} p95 latency and{" "}
-        {formatErrorRate(original.error_rate_percent)} error rate.
+        {formatLatency(original.p95_latency_ms)} p95 /{" "}
+        {formatErrorRate(original.error_rate_percent)} errors.
       </p>
     </section>
   );

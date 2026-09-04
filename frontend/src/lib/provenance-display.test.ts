@@ -64,6 +64,27 @@ describe("humanApprovalLabel", () => {
     );
   });
 
+  it("keeps APPROVED when approved_at exists even if phase is rejected/failed", () => {
+    assert.equal(
+      humanApprovalLabel({
+        approvalRequired: true,
+        approvedAt: "2026-09-04T06:26:53Z",
+        approvalStatus: "approved",
+        phase: "rejected",
+      }),
+      "APPROVED",
+    );
+    assert.equal(
+      humanApprovalLabel({
+        approvalRequired: true,
+        approvedAt: "2026-09-04T06:26:53Z",
+        approvalStatus: "approved",
+        phase: "failed",
+      }),
+      "APPROVED",
+    );
+  });
+
   it("shows REJECTED from approval_status", () => {
     assert.equal(
       humanApprovalLabel({
