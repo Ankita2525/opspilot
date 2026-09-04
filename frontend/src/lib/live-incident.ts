@@ -83,6 +83,9 @@ export type LiveIncidentState = {
   hypothesis: LiveHypothesis | null;
   approval: LiveApproval | null;
   investigationComplete: boolean;
+  /** Public SSE failure hint when present (stage is often absent). */
+  failureError: string | null;
+  failureStage: string | null;
   timeline: Record<TimelineStepId, TimelineStepStatus>;
 };
 
@@ -106,6 +109,8 @@ export function createLiveIncidentState(): LiveIncidentState {
     hypothesis: null,
     approval: null,
     investigationComplete: false,
+    failureError: null,
+    failureStage: null,
     timeline: {
       inspect_metrics: "pending",
       inspect_deployments: "pending",
@@ -197,6 +202,11 @@ export function applyInvestigationEvent(
     case "incident_failed":
       next.streaming = false;
       next.failed = true;
+      next.failureError = readString(event.data, "error") ?? next.failureError;
+      next.failureStage =
+        readString(event.data, "stage") ??
+        readString(event.data, "failure_stage") ??
+        next.failureStage;
       break;
     default:
       break;

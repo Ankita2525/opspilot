@@ -3,20 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalPanel } from "@/components/ApprovalPanel";
-import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { ArchitectureSection } from "@/components/ArchitectureSection";
 import { CommandCenterHeader } from "@/components/CommandCenterHeader";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
 import { IncidentHeader } from "@/components/IncidentHeader";
 import { InspectionSection } from "@/components/InspectionSection";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
-import { LifecycleTimeline } from "@/components/LifecycleTimeline";
+import { LandingHero } from "@/components/LandingHero";
+import { LifecycleRail } from "@/components/LifecycleRail";
 import { LiveProvenancePanel } from "@/components/LiveProvenancePanel";
-import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
+import { SafetyCallout } from "@/components/SafetyCallout";
 import { ScenarioCard } from "@/components/ScenarioCard";
 import { ServiceTopology } from "@/components/ServiceTopology";
 import { TelemetryBands } from "@/components/TelemetryBands";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import {
   getHealth,
   getIncidentProvenance,
@@ -28,17 +29,31 @@ import {
 import { lifecycleSteps, resolveLabStatus } from "@/lib/command-center";
 import type { Phase } from "@/lib/command-center-types";
 import { streamIncident } from "@/lib/incident-stream";
-import {
-  formatErrorRate,
-  formatLatency,
-  humanizeServiceName,
-} from "@/lib/labels";
+import { humanizeServiceName } from "@/lib/labels";
 import {
   applyInvestigationEvent,
   createLiveIncidentState,
   timelineSteps,
   type LiveIncidentState,
 } from "@/lib/live-incident";
+import {
+  approvalStateBelongsToIncident,
+  approvalTerminalKind,
+  phaseFromApprovalResponse,
+} from "@/lib/approval-outcome";
+import {
+  provenanceMatchesIncident,
+  selectRenderableProvenance,
+} from "@/lib/provenance-display";
+import {
+  canStartLiveIncident,
+  consumeTurnstileToken,
+  planStartRetry,
+} from "@/lib/turnstile-start";
+import {
+  isPreIncidentStartError,
+  type PreIncidentCode,
+} from "@/lib/start-rejection";
 import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
 import type { ApprovalRequest, IncidentApprovalResponse, LiveProvenance, Scenario } from "@/lib/types";
 
@@ -69,8 +84,14 @@ export default function Home() {
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
   >("load");
+  const [startGateDetail, setStartGateDetail] = useState<string | null>(null);
+  const [sessionStartBlocked, setSessionStartBlocked] = useState(false);
+  const [startGateCode, setStartGateCode] = useState<PreIncidentCode | null>(
+    null,
+  );
   const generationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const provenanceIncidentRef = useRef<string | null>(null);
 
   const selectedScenario =
     scenarios.find((item) => item.id === selectedScenarioId) ?? null;
@@ -87,6 +108,48 @@ export default function Home() {
     abortActiveStream();
     return generationRef.current;
   }, [abortActiveStream]);
+
+  const clearProvenance = useCallback(() => {
+    provenanceIncidentRef.current = null;
+    setProvenance(null);
+    setProvenanceLoading(false);
+  }, []);
+
+  const loadProvenance = useCallback(
+    async (incidentId: string, generation: number) => {
+      provenanceIncidentRef.current = incidentId;
+      setProvenance(null);
+      setProvenanceLoading(true);
+      try {
+        const loaded = await getIncidentProvenance(incidentId);
+        if (generation !== generationRef.current) {
+          return;
+        }
+        if (
+          provenanceIncidentRef.current !== incidentId ||
+          !provenanceMatchesIncident(loaded.incident_id, incidentId)
+        ) {
+          return;
+        }
+        setProvenance(loaded);
+      } catch {
+        if (
+          generation === generationRef.current &&
+          provenanceIncidentRef.current === incidentId
+        ) {
+          setProvenance(null);
+        }
+      } finally {
+        if (
+          generation === generationRef.current &&
+          provenanceIncidentRef.current === incidentId
+        ) {
+          setProvenanceLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   const loadScenarios = useCallback(async () => {
     setRetryAction("load");
@@ -180,27 +243,40 @@ export default function Home() {
     if (!selectedScenario) {
       return;
     }
-    if (turnstileSiteKey && !turnstileToken) {
+    if (
+      !canStartLiveIncident({
+        turnstileRequired: Boolean(turnstileSiteKey),
+        turnstileToken,
+      })
+    ) {
+      // Missing/expired token is a pre-incident gate — never a stream failure.
+      returnToStartForFreshTurnstile();
       setError("Complete the Cloudflare check before starting a live incident.");
+      setStartGateDetail(null);
+      setStartGateCode(null);
       return;
     }
-    const capturedToken = turnstileToken;
-    setTurnstileToken(null);
+    const { captured, remaining } = consumeTurnstileToken(turnstileToken);
+    setTurnstileToken(remaining);
     const generation = supersedeStream();
     const controller = new AbortController();
     abortRef.current = controller;
 
     setError(null);
+    setStartGateDetail(null);
+    setStartGateCode(null);
     setRetryAction("start");
     setBusy(true);
     setApproval(null);
+    clearProvenance();
     setLive(createLiveIncidentState());
     setPhase("investigating");
 
+    let remountTurnstile = true;
     try {
       await streamIncident({
         scenarioId: selectedScenario.id,
-        turnstileToken: capturedToken,
+        turnstileToken: captured,
         signal: controller.signal,
         onEvent: (event) => {
           if (generation !== generationRef.current) {
@@ -213,21 +289,23 @@ export default function Home() {
             setPhase("active");
             setBusy(false);
             if (telemetryMode === "live" && event.incident_id) {
-              setProvenanceLoading(true);
-              void getIncidentProvenance(event.incident_id)
-                .then(setProvenance)
-                .catch(() => setProvenance(null))
-                .finally(() => setProvenanceLoading(false));
+              void loadProvenance(event.incident_id, generation);
             }
           }
           if (event.event_type === "incident_completed") {
             setPhase("complete");
             setBusy(false);
+            if (telemetryMode === "live" && event.incident_id) {
+              void loadProvenance(event.incident_id, generation);
+            }
           }
           if (event.event_type === "incident_failed") {
             setError(STREAM_FAILURE_MESSAGE);
             setPhase("failed");
             setBusy(false);
+            if (telemetryMode === "live" && event.incident_id) {
+              void loadProvenance(event.incident_id, generation);
+            }
           }
           if (event.event_type === "investigation_blocked") {
             setError("Investigation blocked — telemetry unavailable for live mode.");
@@ -246,6 +324,25 @@ export default function Home() {
       if (generation !== generationRef.current || isAbortError(cause)) {
         return;
       }
+      if (isPreIncidentStartError(cause)) {
+        // No incident existed — return to start screen with truthful gate UX.
+        remountTurnstile = cause.remountTurnstile;
+        setLive(null);
+        setApproval(null);
+        clearProvenance();
+        setPhase("ready");
+        setError(cause.message);
+        setStartGateDetail(cause.detail);
+        setStartGateCode(cause.code);
+        setRetryAction("start");
+        if (cause.disableStart) {
+          setSessionStartBlocked(true);
+        }
+        setTurnstileToken(null);
+        return;
+      }
+      setStartGateDetail(null);
+      setStartGateCode(null);
       setError(STREAM_FAILURE_MESSAGE);
       setPhase("failed");
       setLive((current) =>
@@ -259,8 +356,10 @@ export default function Home() {
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
+        if (remountTurnstile) {
+          setTurnstileReset((current) => current + 1);
+        }
       }
-      setTurnstileReset((current) => current + 1);
     }
   }
 
@@ -268,23 +367,24 @@ export default function Home() {
     if (!live?.incidentId) {
       return;
     }
+    const incidentId = live.incidentId;
+    const generation = generationRef.current;
     setError(null);
     setRetryAction(approved ? "approve" : "reject");
     setBusy(true);
     try {
-      const result = await submitApproval(live.incidentId, approved);
+      const result = await submitApproval(incidentId, approved);
+      if (generation !== generationRef.current) {
+        return;
+      }
+      // Ignore responses that do not belong to the active incident.
+      if (!approvalStateBelongsToIncident(result.incident_id, incidentId)) {
+        return;
+      }
       setApproval(result);
-      setPhase(result.status === "resolved" ? "resolved" : "rejected");
+      setPhase(phaseFromApprovalResponse(result));
       if (telemetryMode === "live") {
-        setProvenanceLoading(true);
-        try {
-          const loaded = await getIncidentProvenance(live.incidentId);
-          setProvenance(loaded);
-        } catch {
-          setProvenance(null);
-        } finally {
-          setProvenanceLoading(false);
-        }
+        await loadProvenance(incidentId, generationRef.current);
       }
     } catch (cause) {
       setError(
@@ -297,6 +397,41 @@ export default function Home() {
     }
   }
 
+  function returnToStartForFreshTurnstile() {
+    if (sessionStartBlocked) {
+      // Session remains capped — do not remount or imply another start is available.
+      setLive(null);
+      setApproval(null);
+      clearProvenance();
+      setBusy(false);
+      setPhase("ready");
+      return;
+    }
+    const plan = planStartRetry();
+    supersedeStream();
+    if (plan.clearLiveIncidentState) {
+      setLive(null);
+      setApproval(null);
+    }
+    if (plan.clearProvenance) {
+      clearProvenance();
+    }
+    if (plan.clearTurnstileToken) {
+      setTurnstileToken(null);
+    }
+    if (plan.remountTurnstile) {
+      setTurnstileReset((current) => current + 1);
+    }
+    setError(null);
+    setStartGateDetail(null);
+    setStartGateCode(null);
+    setBusy(false);
+    if (plan.clearFailedWorkspace) {
+      setPhase("ready");
+    }
+    // selectedScenarioId intentionally preserved (plan.preserveSelectedScenario).
+  }
+
   function retry() {
     if (retryAction === "load") {
       setError(null);
@@ -305,7 +440,8 @@ export default function Home() {
       return;
     }
     if (retryAction === "start") {
-      void handleStart();
+      // Pre-incident or start failure: never re-POST with a consumed token.
+      returnToStartForFreshTurnstile();
       return;
     }
     void handleApproval(retryAction === "approve");
@@ -315,8 +451,11 @@ export default function Home() {
     supersedeStream();
     setLive(null);
     setApproval(null);
+    clearProvenance();
     setError(null);
     setBusy(false);
+    setTurnstileToken(null);
+    setTurnstileReset((current) => current + 1);
     setPhase("ready");
   }
 
@@ -371,6 +510,7 @@ export default function Home() {
     telemetryMode,
     investigating: phase === "investigating",
   });
+  const approvalKind = approval ? approvalTerminalKind(approval) : null;
   const topologyPhase =
     phase === "resolved"
       ? "rollback"
@@ -379,12 +519,16 @@ export default function Home() {
         : phase === "investigating"
           ? "traffic"
           : "idle";
+  const activeProvenance = selectRenderableProvenance(
+    provenance,
+    live?.incidentId,
+  );
   const recoveryWindow =
     approval && approval.recovered_p95_latency_ms !== null
       ? {
           p95_latency_ms: approval.recovered_p95_latency_ms ?? 0,
           error_rate_percent: approval.recovered_error_rate_percent ?? 0,
-          sample_count: provenance?.recovery?.sample_count ?? undefined,
+          sample_count: activeProvenance?.recovery?.sample_count ?? undefined,
         }
       : null;
 
@@ -393,10 +537,6 @@ export default function Home() {
       <CommandCenterHeader
         labStatus={labStatus}
         telemetryMode={telemetryMode}
-        service={inWorkspace ? service : undefined}
-        title={inWorkspace ? title : undefined}
-        revision={live?.approval?.version ?? null}
-        phase={inWorkspace ? phase : undefined}
       />
 
       <main className="workspace command-workspace">
@@ -408,18 +548,30 @@ export default function Home() {
             live={live?.streaming === true}
             telemetryMode={telemetryMode}
             eventCount={live?.eventCount}
+            revision={
+              live?.approval?.version ??
+              activeProvenance?.service_revision ??
+              null
+            }
+            approvalResult={approval}
           />
         ) : null}
-
-        {inWorkspace ? <StoryRail phase={phase} /> : null}
 
         {error ? (
           <div className="error-banner" role="alert">
             <p>{error}</p>
+            {startGateDetail ? (
+              <p className="status-copy">{startGateDetail}</p>
+            ) : null}
             <div className="error-actions">
-              <button type="button" className="button-secondary" onClick={retry}>
-                Retry
-              </button>
+              {!(
+                sessionStartBlocked ||
+                startGateCode === "session_live_incident_limit"
+              ) ? (
+                <button type="button" className="button-secondary" onClick={retry}>
+                  Retry
+                </button>
+              ) : null}
               {phase !== "ready" ? (
                 <button
                   type="button"
@@ -445,18 +597,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        {phase === "ready" ? (
-          <section className="hero" aria-labelledby="product-heading">
-            <p className="hero-brand">OpsPilot</p>
-            <h1 id="product-heading">Autonomous Production Engineering Agent</h1>
-            <p className="hero-copy">
-              Start a live investigation against real sandbox services. OpsPilot
-              gathers runtime evidence, forms a hypothesis, requests human approval
-              for high-risk remediation, and verifies recovery with fresh telemetry.
-            </p>
-            <ArchitectureSection />
-          </section>
-        ) : null}
+        {phase === "ready" ? <LandingHero /> : null}
 
         {phase === "ready" && scenarios.length > 0 ? (
           <section aria-labelledby="scenario-heading">
@@ -479,126 +620,137 @@ export default function Home() {
                 />
               ))}
             </div>
-            <div className="start-row">
-              {turnstileSiteKey ? (
-                <div className="turnstile-panel">
-                  <TurnstileWidget
-                    siteKey={turnstileSiteKey}
-                    onToken={setTurnstileToken}
-                    onStatus={setTurnstileStatus}
-                    resetSignal={turnstileReset}
-                  />
-                  {turnstileStatus === "loading" ? (
-                    <p className="turnstile-status">Verifying you are human…</p>
-                  ) : null}
-                  {turnstileStatus === "error" ? (
-                    <p className="turnstile-status">
-                      Cloudflare check failed. Retry the widget to continue.
+            <div className="lab-command">
+              <div className="lab-command-row">
+                {turnstileSiteKey ? (
+                  <div className="turnstile-panel">
+                    <TurnstileWidget
+                      siteKey={turnstileSiteKey}
+                      onToken={setTurnstileToken}
+                      onStatus={setTurnstileStatus}
+                      resetSignal={turnstileReset}
+                    />
+                    {turnstileStatus === "loading" ? (
+                      <p className="turnstile-status">
+                        Verifying you are human…
+                      </p>
+                    ) : null}
+                    {turnstileStatus === "error" ? (
+                      <p className="turnstile-status">
+                        Cloudflare check failed. Retry the widget to continue.
+                      </p>
+                    ) : null}
+                    {turnstileStatus === "expired" ? (
+                      <p className="turnstile-status">
+                        Cloudflare check expired. Complete it again to start.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="lab-command-main">
+                  <button
+                    type="button"
+                    className="button-primary button-primary-hero"
+                    onClick={() => void handleStart()}
+                    disabled={
+                      busy ||
+                      sessionStartBlocked ||
+                      !selectedScenario ||
+                      Boolean(turnstileSiteKey && !turnstileToken)
+                    }
+                  >
+                    <span className="button-play-icon" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 12 12"
+                        width="12"
+                        height="12"
+                        fill="currentColor"
+                      >
+                        <path d="M3 1.5v9l8-4.5-8-4.5z" />
+                      </svg>
+                    </span>
+                    Start live investigation
+                  </button>
+                  {selectedScenario ? (
+                    <p className="start-hint">
+                      Selected:{" "}
+                      {humanizeServiceName(selectedScenario.affected_service)}
                     </p>
                   ) : null}
-                  {turnstileStatus === "expired" ? (
-                    <p className="turnstile-status">
-                      Cloudflare check expired. Complete it again to start.
+                  {sessionStartBlocked ? (
+                    <p className="start-hint">
+                      Live demo limit reached for this browser session.
                     </p>
                   ) : null}
                 </div>
-              ) : null}
-              <button
-                type="button"
-                className="button-primary button-primary-hero"
-                onClick={() => void handleStart()}
-                disabled={
-                  busy ||
-                  !selectedScenario ||
-                  Boolean(turnstileSiteKey && !turnstileToken)
-                }
-              >
-                Start live investigation
-              </button>
-              {selectedScenario ? (
-                <p className="start-hint">
-                  Selected: {humanizeServiceName(selectedScenario.affected_service)}
-                </p>
-              ) : null}
+              </div>
+              <SafetyCallout />
+            </div>
+            <div className="architecture-below">
+              <ArchitectureSection />
             </div>
           </section>
         ) : null}
 
         {live && inWorkspace ? (
           <>
-            <ServiceTopology affectedService={service} phase={topologyPhase} />
-            <TelemetryBands
-              mode={telemetryMode}
-              baseline={
-                live.baseline
-                  ? {
-                      ...live.baseline,
-                      sample_count: provenance?.baseline?.sample_count,
-                    }
-                  : null
-              }
-              degraded={
-                live.degraded
-                  ? {
-                      ...live.degraded,
-                      sample_count: provenance?.degraded?.sample_count,
-                    }
-                  : null
-              }
-              recovery={recoveryWindow}
-            />
-            <LifecycleTimeline
+            <LifecycleRail
               steps={lifecycleSteps({
                 phase,
                 hasBaseline: Boolean(live.baseline),
                 hasHypothesis: Boolean(live.hypothesis),
                 hasApproval: Boolean(live.approval),
                 resolved: phase === "resolved",
+                remediationExecuted:
+                  approvalKind === "approved_unverified" &&
+                  approval?.execution_success === true,
+                failureStage:
+                  approvalKind === "approved_unverified"
+                    ? "verification"
+                    : live.failureStage,
               })}
             />
-            {originalMetrics ? (
-              <div className="metric-grid">
-                <MetricCard
-                  label="p95 latency"
-                  value={formatLatency(originalMetrics.p95_latency_ms)}
-                  hint={
-                    phase === "resolved" ||
-                    phase === "rejected" ||
-                    phase === "complete"
-                      ? "At detection"
-                      : undefined
-                  }
-                  tone="incident"
-                />
-                <MetricCard
-                  label="Error rate"
-                  value={formatErrorRate(originalMetrics.error_rate_percent)}
-                  hint={
-                    phase === "resolved" ||
-                    phase === "rejected" ||
-                    phase === "complete"
-                      ? "At detection"
-                      : undefined
-                  }
-                  tone="incident"
-                />
-              </div>
-            ) : null}
-
-              <div
-                className={
-                  live.hypothesis
-                    ? "workspace-grid"
-                    : "workspace-grid workspace-grid-solo"
+            <div className="incident-ops-grid">
+              <ServiceTopology affectedService={service} phase={topologyPhase} />
+              <TelemetryBands
+                mode={telemetryMode}
+                baseline={
+                  live.baseline
+                    ? {
+                        ...live.baseline,
+                        sample_count: activeProvenance?.baseline?.sample_count,
+                      }
+                    : null
                 }
-              >
+                degraded={
+                  live.degraded
+                    ? {
+                        ...live.degraded,
+                        sample_count: activeProvenance?.degraded?.sample_count,
+                      }
+                    : null
+                }
+                recovery={recoveryWindow}
+              />
+            </div>
+
+            <div
+              className={
+                live.hypothesis
+                  ? "workspace-grid"
+                  : "workspace-grid workspace-grid-solo"
+              }
+            >
               <InvestigationTimeline
                 steps={timelineSteps(live)}
                 skills={live.selectedSkills}
                 symptomSummary={live.symptomSummary}
               />
               {live.hypothesis ? (
-                <HypothesisPanel hypothesis={live.hypothesis} />
+                <HypothesisPanel
+                  hypothesis={live.hypothesis}
+                  evidenceCount={live.evidence.length}
+                />
               ) : null}
             </div>
 
@@ -617,11 +769,26 @@ export default function Home() {
 
             {approval &&
             originalMetrics &&
-            (phase === "resolved" || phase === "rejected") ? (
-              <RecoveryPanel original={originalMetrics} approval={approval} />
+            (phase === "resolved" ||
+              phase === "rejected" ||
+              (phase === "failed" && approvalKind === "approved_unverified")) ? (
+              <RecoveryPanel
+                original={originalMetrics}
+                approval={approval}
+                freshTelemetryVerified={
+                  activeProvenance?.recovery?.all_samples_post_remediation ??
+                  activeProvenance?.recovery?.verified ??
+                  null
+                }
+              />
             ) : null}
 
-            <LiveProvenancePanel provenance={provenance} loading={provenanceLoading} />
+            <LiveProvenancePanel
+              provenance={activeProvenance}
+              loading={provenanceLoading}
+              phase={phase}
+              approvalStatus={approval?.approval_status ?? null}
+            />
 
             <InspectionSection
               symptomSummary={live.symptomSummary}
@@ -630,7 +797,10 @@ export default function Home() {
               lifecyclePhase={headerPhase}
             />
 
-            {phase === "resolved" || phase === "rejected" || phase === "complete" ? (
+            {phase === "resolved" ||
+            phase === "rejected" ||
+            phase === "complete" ||
+            (phase === "failed" && approvalKind === "approved_unverified") ? (
               <div className="reset-row">
                 <button
                   type="button"
@@ -674,48 +844,4 @@ function toApprovalRequest(
     risk_level: approval.riskLevel,
     message: approval.message,
   };
-}
-
-function StoryRail({ phase }: { phase: Phase }) {
-  const investigated =
-    phase === "active" ||
-    phase === "complete" ||
-    phase === "resolved" ||
-    phase === "rejected";
-  const decided = phase === "resolved" || phase === "rejected" || phase === "complete";
-  const steps = [
-    {
-      id: "broke",
-      label: "Something broke",
-      done: phase !== "ready" && phase !== "loading",
-    },
-    {
-      id: "investigated",
-      label: "OpsPilot investigated",
-      done: investigated,
-    },
-    {
-      id: "approval",
-      label: "Human approval",
-      done: phase === "resolved" || phase === "rejected",
-    },
-    {
-      id: "outcome",
-      label:
-        phase === "rejected" || phase === "complete"
-          ? "Unchanged"
-          : "Service recovers",
-      done: decided,
-    },
-  ];
-
-  return (
-    <ol className="story-rail" aria-label="Incident workflow">
-      {steps.map((step) => (
-        <li key={step.id} className={step.done ? "done" : undefined}>
-          {step.label}
-        </li>
-      ))}
-    </ol>
-  );
 }

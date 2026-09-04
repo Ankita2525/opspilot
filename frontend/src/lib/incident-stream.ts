@@ -6,6 +6,7 @@ import {
   parseInvestigationEvent,
   STREAM_FAILURE_MESSAGE,
 } from "./sse-parser";
+import { preIncidentErrorFromResponse } from "./start-rejection";
 import type { InvestigationEvent } from "./types";
 
 const TERMINAL_EVENT_TYPES = new Set([
@@ -43,7 +44,8 @@ export async function streamIncident(options: {
   }
 
   if (!response.ok) {
-    throw new IncidentStreamError();
+    // Pre-incident gate: retain status + backend error code for truthful UX.
+    throw await preIncidentErrorFromResponse(response);
   }
   if (!response.body) {
     throw new IncidentStreamError();

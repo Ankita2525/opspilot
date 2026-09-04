@@ -1,4 +1,15 @@
+import {
+  incidentPhaseLabel,
+  incidentPhaseTone,
+  type Phase,
+} from "@/lib/command-center";
+import {
+  approvalTerminalKind,
+  incidentHeaderSummaryForApproval,
+} from "@/lib/approval-outcome";
 import { humanizeServiceName } from "@/lib/labels";
+import { incidentRevisionMetaLabel } from "@/lib/provenance-display";
+import type { IncidentApprovalResponse } from "@/lib/types";
 
 type IncidentPhase =
   | "investigating"
@@ -15,37 +26,19 @@ type IncidentHeaderProps = {
   live?: boolean;
   telemetryMode?: string | null;
   eventCount?: number;
+  revision?: string | null;
+  approvalResult?: IncidentApprovalResponse | null;
 };
 
-const PHASE_COPY: Record<
-  IncidentPhase,
-  { eyebrow: string; summary: string }
-> = {
-  investigating: {
-    eyebrow: "Investigating",
-    summary: "OpsPilot is gathering evidence. Production is unchanged.",
-  },
-  active: {
-    eyebrow: "Awaiting human approval",
-    summary: "High-risk rollback is ready. Production is unchanged until you decide.",
-  },
-  complete: {
-    eyebrow: "Investigation complete",
-    summary:
-      "Investigation complete. No supported automated remediation was selected. Production remains unchanged.",
-  },
-  resolved: {
-    eyebrow: "Incident resolved",
-    summary: "Service health restored after approved rollback.",
-  },
-  rejected: {
-    eyebrow: "Remediation rejected",
-    summary: "No production changes were made.",
-  },
-  failed: {
-    eyebrow: "Investigation incomplete",
-    summary: "Investigation could not be completed.",
-  },
+const PHASE_SUMMARY: Record<IncidentPhase, string> = {
+  investigating: "OpsPilot is gathering evidence. Production is unchanged.",
+  active:
+    "High-risk rollback is ready. Production is unchanged until you decide.",
+  complete:
+    "Investigation complete. No supported automated remediation was selected. Production remains unchanged.",
+  resolved: "Service health restored after approved rollback.",
+  rejected: "No production changes were made.",
+  failed: "Investigation could not be completed.",
 };
 
 export function IncidentHeader({
@@ -55,39 +48,72 @@ export function IncidentHeader({
   live = false,
   telemetryMode = null,
   eventCount,
+  revision = null,
+  approvalResult = null,
 }: IncidentHeaderProps) {
-  const copy = PHASE_COPY[phase];
-  const modeLabel =
-    telemetryMode === "live"
-      ? "LIVE SANDBOX"
-      : live
-        ? "LIVE"
-        : null;
+  const tone = incidentPhaseTone(phase as Phase);
+  const liveSandbox =
+    telemetryMode === "live" ? "LIVE SANDBOX" : live ? "LIVE" : null;
+  const kind = approvalResult ? approvalTerminalKind(approvalResult) : null;
+  const summary =
+    incidentHeaderSummaryForApproval(phase as Phase, approvalResult) ??
+    PHASE_SUMMARY[phase];
+  const phaseLabel =
+    kind === "approved_unverified"
+      ? "RECOVERY UNVERIFIED"
+      : incidentPhaseLabel(phase as Phase);
 
   return (
-    <header className={`incident-header incident-header-${phase}`}>
-      <p className="incident-kicker">
-        {copy.eyebrow}
-        {modeLabel ? (
-          <span className="live-badge" aria-label="Live incident sandbox">
-            {modeLabel}
-          </span>
-        ) : null}
-      </p>
-      <h1 className="incident-title">{title}</h1>
-      <p className="incident-service">
-        <span className="sr-only">Affected service: </span>
-        <span className="incident-service-name">
+    <header className={`incident-command incident-command-${tone}`}>
+      <div className="incident-command-main">
+        <p className="incident-command-service">
           {humanizeServiceName(service)}
-        </span>
-        <code>{service}</code>
-      </p>
-      <p className="incident-summary">{copy.summary}</p>
-      {eventCount !== undefined && eventCount > 0 ? (
-        <p className="incident-meta">
-          {eventCount} {eventCount === 1 ? "event" : "events"}
         </p>
-      ) : null}
+        <h1 className="incident-command-title">{title}</h1>
+        <p className="incident-command-summary">{summary}</p>
+      </div>
+      <dl className="incident-command-meta">
+        <div>
+          <dt>Service</dt>
+          <dd>
+            <code>{service}</code>
+          </dd>
+        </div>
+        {revision ? (
+          <div>
+            <dt>{incidentRevisionMetaLabel()}</dt>
+            <dd>
+              <code>{revision}</code>
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>Phase</dt>
+          <dd className={`incident-phase-pill incident-phase-${tone}`}>
+            {phaseLabel}
+          </dd>
+        </div>
+        {liveSandbox ? (
+          <div>
+            <dt>Runtime</dt>
+            <dd className="incident-live-pill">{liveSandbox}</dd>
+          </div>
+        ) : null}
+        {telemetryMode === "live" ? (
+          <div>
+            <dt>Telemetry</dt>
+            <dd className="incident-live-pill incident-live-pill-blue">
+              LIVE TELEMETRY
+            </dd>
+          </div>
+        ) : null}
+        {eventCount !== undefined && eventCount > 0 ? (
+          <div>
+            <dt>Events</dt>
+            <dd className="type-mono">{eventCount}</dd>
+          </div>
+        ) : null}
+      </dl>
     </header>
   );
 }

@@ -12,22 +12,35 @@ export function InvestigationTimeline({
   symptomSummary,
 }: InvestigationTimelineProps) {
   return (
-    <section className="panel" aria-labelledby="investigation-heading">
+    <section
+      className="panel investigation-panel"
+      aria-labelledby="investigation-heading"
+    >
       <h2 id="investigation-heading">Investigation</h2>
-      <ol className="timeline">
+      <ol className="investigation-rail">
         {steps.map((step, index) => (
           <li
             key={step.id}
-            className={`timeline-item timeline-item-${step.status}`}
+            className={`investigation-step investigation-step-${step.status}`}
           >
-            <span className="timeline-marker" aria-hidden="true">
-              {step.status === "running" ? (
+            <span className="investigation-marker" aria-hidden="true">
+              {step.status === "completed" ? (
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+                  <path
+                    d="M3.5 8.2l2.8 2.8 6.2-6.4"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : step.status === "running" ? (
                 <span className="timeline-spinner" />
               ) : (
                 index + 1
               )}
             </span>
-            <div>
+            <div className="investigation-copy">
               <p className="timeline-label">{step.label}</p>
               <p className="timeline-state">{statusLabel(step.status)}</p>
             </div>

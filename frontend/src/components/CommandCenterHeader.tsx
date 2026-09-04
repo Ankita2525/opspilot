@@ -28,6 +28,22 @@ const STATUS_LABEL: Record<LabStatus, string> = {
   investigating: "INVESTIGATING",
 };
 
+function statusTone(labStatus: LabStatus): "healthy" | "info" | "warn" | "error" | "muted" {
+  if (labStatus === "ready") {
+    return "healthy";
+  }
+  if (labStatus === "degraded" || labStatus === "busy") {
+    return "error";
+  }
+  if (labStatus === "offline") {
+    return "muted";
+  }
+  if (labStatus === "investigating" || labStatus === "warming" || labStatus === "starting") {
+    return "info";
+  }
+  return "info";
+}
+
 export function CommandCenterHeader({
   labStatus,
   telemetryMode,
@@ -37,22 +53,49 @@ export function CommandCenterHeader({
   phase,
 }: Props) {
   const isLive = telemetryMode === "live";
+  const tone = statusTone(labStatus);
+
   return (
     <header className="command-header">
       <div className="command-header-top">
-        <div>
-          <p className="command-kicker">OpsPilot</p>
-          <h1 className="command-title">Autonomous Production Engineering Agent</h1>
+        <div className="command-brand">
+          <span className="command-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28" width="28" height="28" fill="none">
+              <rect
+                x="2"
+                y="2"
+                width="24"
+                height="24"
+                rx="7"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <circle cx="14" cy="14" r="4.5" fill="currentColor" />
+              <path
+                d="M14 6v3.2M14 18.8V22M6 14h3.2M18.8 14H22"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <p className="command-brand-name">OPSPILOT</p>
         </div>
-        <div className="command-status-block">
-          <p className="command-status-label">Live lab status</p>
-          <p className={`command-status command-status-${labStatus}`}>
-            <span className="status-pulse" aria-hidden />
+        <div className="command-status-pills" role="status" aria-live="polite">
+          <span className={`status-pill status-pill-${tone}`}>
+            <span className="status-pill-dot status-pill-dot-lab" aria-hidden />
             {STATUS_LABEL[labStatus]}
-          </p>
-          <p className="command-mode">
+          </span>
+          <span
+            className={
+              isLive
+                ? "status-pill status-pill-live"
+                : "status-pill status-pill-muted"
+            }
+          >
+            <span className="status-pill-dot status-pill-dot-telemetry" aria-hidden />
             {isLive ? "LIVE TELEMETRY" : "REFERENCE EVALUATION"}
-          </p>
+          </span>
         </div>
       </div>
       {service && title ? (
