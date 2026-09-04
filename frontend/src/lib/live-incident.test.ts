@@ -154,3 +154,29 @@ test("incident_completed is a terminal investigation without approval", () => {
     "Connection pool exhaustion followed deployment v1.18.3.",
   );
 });
+
+test("incident_failed captures public error without inventing stage", () => {
+  let state = createLiveIncidentState();
+  state = applyInvestigationEvent(
+    state,
+    event({
+      sequence: 1,
+      event_type: "incident_started",
+      data: { affected_service: "payments-service" },
+    }),
+  );
+  state = applyInvestigationEvent(
+    state,
+    event({
+      sequence: 2,
+      event_type: "incident_failed",
+      data: {
+        error: "diagnosis_unavailable",
+        message: "Investigation could not be completed.",
+      },
+    }),
+  );
+  assert.equal(state.failed, true);
+  assert.equal(state.failureError, "diagnosis_unavailable");
+  assert.equal(state.failureStage, null);
+});

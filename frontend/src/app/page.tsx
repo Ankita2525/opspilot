@@ -36,6 +36,10 @@ import {
   timelineSteps,
   type LiveIncidentState,
 } from "@/lib/live-incident";
+import {
+  provenanceMatchesIncident,
+  selectRenderableProvenance,
+} from "@/lib/provenance-display";
 import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
 import type { ApprovalRequest, IncidentApprovalResponse, LiveProvenance, Scenario } from "@/lib/types";
 
@@ -68,6 +72,7 @@ export default function Home() {
   >("load");
   const generationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const provenanceIncidentRef = useRef<string | null>(null);
 
   const selectedScenario =
     scenarios.find((item) => item.id === selectedScenarioId) ?? null;
@@ -84,6 +89,48 @@ export default function Home() {
     abortActiveStream();
     return generationRef.current;
   }, [abortActiveStream]);
+
+  const clearProvenance = useCallback(() => {
+    provenanceIncidentRef.current = null;
+    setProvenance(null);
+    setProvenanceLoading(false);
+  }, []);
+
+  const loadProvenance = useCallback(
+    async (incidentId: string, generation: number) => {
+      provenanceIncidentRef.current = incidentId;
+      setProvenance(null);
+      setProvenanceLoading(true);
+      try {
+        const loaded = await getIncidentProvenance(incidentId);
+        if (generation !== generationRef.current) {
+          return;
+        }
+        if (
+          provenanceIncidentRef.current !== incidentId ||
+          !provenanceMatchesIncident(loaded.incident_id, incidentId)
+        ) {
+          return;
+        }
+        setProvenance(loaded);
+      } catch {
+        if (
+          generation === generationRef.current &&
+          provenanceIncidentRef.current === incidentId
+        ) {
+          setProvenance(null);
+        }
+      } finally {
+        if (
+          generation === generationRef.current &&
+          provenanceIncidentRef.current === incidentId
+        ) {
+          setProvenanceLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   const loadScenarios = useCallback(async () => {
     setRetryAction("load");
@@ -191,6 +238,7 @@ export default function Home() {
     setRetryAction("start");
     setBusy(true);
     setApproval(null);
+    clearProvenance();
     setLive(createLiveIncidentState());
     setPhase("investigating");
 
@@ -210,21 +258,23 @@ export default function Home() {
             setPhase("active");
             setBusy(false);
             if (telemetryMode === "live" && event.incident_id) {
-              setProvenanceLoading(true);
-              void getIncidentProvenance(event.incident_id)
-                .then(setProvenance)
-                .catch(() => setProvenance(null))
-                .finally(() => setProvenanceLoading(false));
+              void loadProvenance(event.incident_id, generation);
             }
           }
           if (event.event_type === "incident_completed") {
             setPhase("complete");
             setBusy(false);
+            if (telemetryMode === "live" && event.incident_id) {
+              void loadProvenance(event.incident_id, generation);
+            }
           }
           if (event.event_type === "incident_failed") {
             setError(STREAM_FAILURE_MESSAGE);
             setPhase("failed");
             setBusy(false);
+            if (telemetryMode === "live" && event.incident_id) {
+              void loadProvenance(event.incident_id, generation);
+            }
           }
           if (event.event_type === "investigation_blocked") {
             setError("Investigation blocked — telemetry unavailable for live mode.");
@@ -273,15 +323,7 @@ export default function Home() {
       setApproval(result);
       setPhase(result.status === "resolved" ? "resolved" : "rejected");
       if (telemetryMode === "live") {
-        setProvenanceLoading(true);
-        try {
-          const loaded = await getIncidentProvenance(live.incidentId);
-          setProvenance(loaded);
-        } catch {
-          setProvenance(null);
-        } finally {
-          setProvenanceLoading(false);
-        }
+        await loadProvenance(live.incidentId, generationRef.current);
       }
     } catch (cause) {
       setError(
@@ -312,6 +354,7 @@ export default function Home() {
     supersedeStream();
     setLive(null);
     setApproval(null);
+    clearProvenance();
     setError(null);
     setBusy(false);
     setPhase("ready");
@@ -376,12 +419,16 @@ export default function Home() {
         : phase === "investigating"
           ? "traffic"
           : "idle";
+  const activeProvenance = selectRenderableProvenance(
+    provenance,
+    live?.incidentId,
+  );
   const recoveryWindow =
     approval && approval.recovered_p95_latency_ms !== null
       ? {
           p95_latency_ms: approval.recovered_p95_latency_ms ?? 0,
           error_rate_percent: approval.recovered_error_rate_percent ?? 0,
-          sample_count: provenance?.recovery?.sample_count ?? undefined,
+          sample_count: activeProvenance?.recovery?.sample_count ?? undefined,
         }
       : null;
 
@@ -401,7 +448,11 @@ export default function Home() {
             live={live?.streaming === true}
             telemetryMode={telemetryMode}
             eventCount={live?.eventCount}
-            revision={live?.approval?.version ?? provenance?.service_revision ?? null}
+            revision={
+              live?.approval?.version ??
+              activeProvenance?.service_revision ??
+              null
+            }
           />
         ) : null}
 
@@ -535,6 +586,7 @@ export default function Home() {
                 hasHypothesis: Boolean(live.hypothesis),
                 hasApproval: Boolean(live.approval),
                 resolved: phase === "resolved",
+                failureStage: live.failureStage,
               })}
             />
             <div className="incident-ops-grid">
@@ -545,7 +597,7 @@ export default function Home() {
                   live.baseline
                     ? {
                         ...live.baseline,
-                        sample_count: provenance?.baseline?.sample_count,
+                        sample_count: activeProvenance?.baseline?.sample_count,
                       }
                     : null
                 }
@@ -553,7 +605,7 @@ export default function Home() {
                   live.degraded
                     ? {
                         ...live.degraded,
-                        sample_count: provenance?.degraded?.sample_count,
+                        sample_count: activeProvenance?.degraded?.sample_count,
                       }
                     : null
                 }
@@ -601,16 +653,18 @@ export default function Home() {
                 original={originalMetrics}
                 approval={approval}
                 freshTelemetryVerified={
-                  provenance?.recovery?.all_samples_post_remediation ??
-                  provenance?.recovery?.verified ??
+                  activeProvenance?.recovery?.all_samples_post_remediation ??
+                  activeProvenance?.recovery?.verified ??
                   null
                 }
               />
             ) : null}
 
             <LiveProvenancePanel
-              provenance={provenance}
+              provenance={activeProvenance}
               loading={provenanceLoading}
+              phase={phase}
+              approvalStatus={approval?.approval_status ?? null}
             />
 
             <InspectionSection

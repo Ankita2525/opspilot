@@ -181,6 +181,11 @@ export type LiveProvenance = {
     model: string | null;
     evidence_count: number;
     generated_at: string | null;
+    primary_model_attempted?: string | null;
+    fallback_used?: boolean;
+    fallback_model?: string | null;
+    fallback_reason?: string | null;
+    final_model?: string | null;
   } | null;
   remediation: {
     typed_action: string | null;

@@ -230,7 +230,7 @@ export default function IncidentQaPage() {
             title="Checkout API latency after deployment"
             telemetryMode="live"
             eventCount={41}
-            revision="v1.18.2"
+            revision="v1.18.3"
           />
           <LifecycleRail
             steps={lifecycleSteps({

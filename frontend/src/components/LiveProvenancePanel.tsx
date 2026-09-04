@@ -1,13 +1,18 @@
+import { humanApprovalLabel } from "@/lib/provenance-display";
 import type { LiveProvenance } from "@/lib/types";
 
 type Props = {
   provenance: LiveProvenance | null;
   loading?: boolean;
+  /** Command-center phase after approve/reject (backend provenance lacks rejected). */
+  phase?: string | null;
+  /** IncidentApprovalResponse.approval_status when known. */
+  approvalStatus?: string | null;
 };
 
-type ProvenanceRecord = LiveProvenance & {
+type DiagnosisExtras = {
   fallback_used?: boolean;
-  primary_model?: string | null;
+  primary_model_attempted?: string | null;
   fallback_model?: string | null;
   fallback_reason?: string | null;
   final_model?: string | null;
@@ -34,8 +39,18 @@ function row(
   );
 }
 
-export function LiveProvenancePanel({ provenance, loading }: Props) {
-  const extended = provenance as ProvenanceRecord | null;
+export function LiveProvenancePanel({
+  provenance,
+  loading,
+  phase = null,
+  approvalStatus = null,
+}: Props) {
+  const diagnosis = provenance?.diagnosis as
+    | (NonNullable<LiveProvenance["diagnosis"]> & DiagnosisExtras)
+    | null
+    | undefined;
+  const fallbackUsed = diagnosis?.fallback_used === true;
+
   return (
     <section className="panel provenance-panel" aria-label="Live run provenance">
       <h2>Live run provenance</h2>
@@ -54,21 +69,25 @@ export function LiveProvenancePanel({ provenance, loading }: Props) {
           </dl>
           <dl className="provenance-group">
             {row("Incident revision", provenance.service_revision, true)}
-            {row("Diagnosis provider", provenance.diagnosis?.provider ?? null)}
-            {row("Model", provenance.diagnosis?.model ?? null, true)}
-            {extended?.fallback_used
-              ? row("Primary model", extended.primary_model ?? null, true)
+            {row("Diagnosis provider", diagnosis?.provider ?? null)}
+            {row("Model", diagnosis?.model ?? null, true)}
+            {fallbackUsed
+              ? row(
+                  "Primary model",
+                  diagnosis?.primary_model_attempted ?? null,
+                  true,
+                )
               : null}
-            {extended?.fallback_used
-              ? row("Fallback model", extended.fallback_model ?? null, true)
+            {fallbackUsed
+              ? row("Fallback model", diagnosis?.fallback_model ?? null, true)
               : null}
-            {extended?.fallback_used
-              ? row("Fallback reason", extended.fallback_reason ?? null)
+            {fallbackUsed
+              ? row("Fallback reason", diagnosis?.fallback_reason ?? null)
               : null}
-            {extended?.fallback_used
+            {fallbackUsed
               ? row(
                   "Final model",
-                  extended.final_model ?? provenance.diagnosis?.model ?? null,
+                  diagnosis?.final_model ?? diagnosis?.model ?? null,
                   true,
                 )
               : null}
@@ -76,11 +95,12 @@ export function LiveProvenancePanel({ provenance, loading }: Props) {
           <dl className="provenance-group">
             {row(
               "Human approval",
-              provenance.remediation?.approval_required
-                ? provenance.remediation.approved_at
-                  ? "APPROVED"
-                  : "REQUIRED"
-                : "N/A",
+              humanApprovalLabel({
+                approvalRequired: provenance.remediation?.approval_required,
+                approvedAt: provenance.remediation?.approved_at,
+                approvalStatus,
+                phase,
+              }),
             )}
             {row(
               "Recovery evidence",

@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { lifecycleSteps, resolveLabStatus } from "./command-center.ts";
+import {
+  lifecycleSteps,
+  resolveLabStatus,
+  resolveLifecycleFailureAnchor,
+} from "./command-center.ts";
 
 describe("resolveLabStatus", () => {
   it("maps cold start loading to starting", () => {
@@ -77,5 +81,67 @@ describe("lifecycleSteps", () => {
     const approval = steps.find((step) => step.id === "approval");
     assert.equal(approval?.state, "active");
     assert.equal(approval?.tone, "approval");
+  });
+
+  it("early failure before baseline uses generic Failed terminal, not approval", () => {
+    const steps = lifecycleSteps({
+      phase: "failed",
+      hasBaseline: false,
+      hasHypothesis: false,
+      hasApproval: false,
+      resolved: false,
+    });
+    const approval = steps.find((step) => step.id === "approval");
+    const failed = steps.find((step) => step.id === "failed");
+    assert.equal(approval?.state, "pending");
+    assert.equal(failed?.state, "failed");
+    assert.equal(failed?.tone, "failed");
+  });
+
+  it("failure during investigation marks investigation failed, not approval", () => {
+    const steps = lifecycleSteps({
+      phase: "failed",
+      hasBaseline: true,
+      hasHypothesis: false,
+      hasApproval: false,
+      resolved: false,
+      failureStage: "generate_hypothesis",
+    });
+    assert.equal(
+      steps.find((step) => step.id === "investigation")?.state,
+      "failed",
+    );
+    assert.equal(steps.find((step) => step.id === "approval")?.state, "pending");
+    assert.equal(steps.find((step) => step.id === "baseline")?.state, "done");
+    assert.equal(
+      steps.some((step) => step.id === "failed"),
+      false,
+    );
+  });
+
+  it("failure after diagnosis keeps later stages pending with Failed terminal", () => {
+    const steps = lifecycleSteps({
+      phase: "failed",
+      hasBaseline: true,
+      hasHypothesis: true,
+      hasApproval: false,
+      resolved: false,
+    });
+    assert.equal(steps.find((step) => step.id === "diagnosis")?.state, "done");
+    assert.equal(steps.find((step) => step.id === "approval")?.state, "pending");
+    assert.equal(steps.find((step) => step.id === "failed")?.state, "failed");
+  });
+});
+
+describe("resolveLifecycleFailureAnchor", () => {
+  it("defaults to generic failed when no progress exists", () => {
+    assert.equal(
+      resolveLifecycleFailureAnchor({
+        hasBaseline: false,
+        hasHypothesis: false,
+        hasApproval: false,
+      }),
+      "failed",
+    );
   });
 });

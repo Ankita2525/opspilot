@@ -4,6 +4,7 @@ import {
   type Phase,
 } from "@/lib/command-center";
 import { humanizeServiceName } from "@/lib/labels";
+import { incidentRevisionMetaLabel } from "@/lib/provenance-display";
 
 type IncidentPhase =
   | "investigating"
@@ -65,7 +66,7 @@ export function IncidentHeader({
         </div>
         {revision ? (
           <div>
-            <dt>{phase === "resolved" ? "Current revision" : "Incident revision"}</dt>
+            <dt>{incidentRevisionMetaLabel()}</dt>
             <dd>
               <code>{revision}</code>
             </dd>

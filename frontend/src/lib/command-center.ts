@@ -55,20 +55,76 @@ export function resolveLabStatus(input: {
   return "ready";
 }
 
+/**
+ * Infer where failure landed from observed progress only.
+ * Prefer an explicit backend stage when the UI contract exposes one; otherwise
+ * never invent approval/rollback progress.
+ */
+export function resolveLifecycleFailureAnchor(input: {
+  hasBaseline: boolean;
+  hasHypothesis: boolean;
+  hasApproval: boolean;
+  /** Optional backend/SSE stage when available (e.g. generate_hypothesis). */
+  failureStage?: string | null;
+}): string {
+  const stage = (input.failureStage ?? "").toLowerCase();
+  if (
+    stage === "approval" ||
+    stage === "awaiting_approval" ||
+    stage === "approval_timeout"
+  ) {
+    return "approval";
+  }
+  if (
+    stage === "generate_hypothesis" ||
+    stage === "diagnosis" ||
+    stage === "hypothesis"
+  ) {
+    return input.hasHypothesis ? "failed" : "investigation";
+  }
+  if (
+    stage === "baseline" ||
+    stage === "baseline_collection" ||
+    stage === "inspect_metrics"
+  ) {
+    return input.hasBaseline ? "investigation" : "failed";
+  }
+  if (input.hasApproval) {
+    return "approval";
+  }
+  if (input.hasHypothesis) {
+    return "failed";
+  }
+  if (input.hasBaseline) {
+    return "investigation";
+  }
+  return "failed";
+}
+
 export function lifecycleSteps(input: {
   phase: Phase;
   hasBaseline: boolean;
   hasHypothesis: boolean;
   hasApproval: boolean;
   resolved: boolean;
+  failureStage?: string | null;
 }): LifecycleStep[] {
   const failed = input.phase === "failed";
+  const failureAnchor = failed
+    ? resolveLifecycleFailureAnchor({
+        hasBaseline: input.hasBaseline,
+        hasHypothesis: input.hasHypothesis,
+        hasApproval: input.hasApproval,
+        failureStage: input.failureStage,
+      })
+    : null;
   const investigating =
-    input.phase === "investigating" ||
-    (input.hasBaseline && !input.hasHypothesis && !failed);
+    !failed &&
+    (input.phase === "investigating" ||
+      (input.hasBaseline && !input.hasHypothesis));
   const awaitingApproval = input.phase === "active" && input.hasApproval;
 
-  return [
+  const steps: LifecycleStep[] = [
     {
       id: "baseline",
       label: "Baseline",
@@ -84,24 +140,28 @@ export function lifecycleSteps(input: {
     {
       id: "degraded",
       label: "Degraded",
-      state: input.hasHypothesis || input.hasApproval || input.resolved
-        ? "done"
-        : input.hasBaseline
-          ? "active"
-          : "pending",
+      state:
+        input.hasHypothesis || input.hasApproval || input.resolved
+          ? "done"
+          : input.hasBaseline && !failed
+            ? "active"
+            : input.hasBaseline
+              ? "done"
+              : "pending",
       tone: "degraded",
     },
     {
       id: "investigation",
       label: "Investigation",
-      state: input.hasHypothesis
-        ? "done"
-        : input.hasBaseline && input.phase === "investigating"
-          ? "active"
-          : input.hasBaseline
-            ? "active"
-            : "pending",
-      tone: "investigate",
+      state:
+        failureAnchor === "investigation"
+          ? "failed"
+          : input.hasHypothesis
+            ? "done"
+            : input.hasBaseline && !failed
+              ? "active"
+              : "pending",
+      tone: failureAnchor === "investigation" ? "failed" : "investigate",
     },
     {
       id: "diagnosis",
@@ -112,16 +172,17 @@ export function lifecycleSteps(input: {
     {
       id: "approval",
       label: "Awaiting approval",
-      state: failed
-        ? "failed"
-        : awaitingApproval
-          ? "active"
-          : input.phase === "resolved" || input.phase === "rejected"
-            ? "done"
-            : input.hasApproval
+      state:
+        failureAnchor === "approval"
+          ? "failed"
+          : awaitingApproval
+            ? "active"
+            : input.phase === "resolved" || input.phase === "rejected"
               ? "done"
-              : "pending",
-      tone: "approval",
+              : input.hasApproval
+                ? "done"
+                : "pending",
+      tone: failureAnchor === "approval" ? "failed" : "approval",
     },
     {
       id: "rollback",
@@ -140,6 +201,17 @@ export function lifecycleSteps(input: {
       tone: "recovery",
     },
   ];
+
+  if (failureAnchor === "failed") {
+    steps.push({
+      id: "failed",
+      label: "Failed",
+      state: "failed",
+      tone: "failed",
+    });
+  }
+
+  return steps;
 }
 
 export function incidentPhaseLabel(phase: Phase): string {
