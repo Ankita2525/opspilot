@@ -1067,12 +1067,12 @@ body {
 .hypothesis-cause {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   font-weight: 500;
-  letter-spacing: -0.015em;
-  line-height: 1.4;
+  letter-spacing: 0;
+  line-height: 1.5;
   text-transform: none;
-  max-width: 34rem;
+  max-width: 32rem;
 }
 
 .hypothesis-confidence {
@@ -2715,12 +2715,12 @@ body {
 
 .root-cause-panel .hypothesis-cause {
   margin: 0.45rem 0 0;
-  font-size: clamp(1.2rem, 2vw, 1.45rem);
+  font-size: clamp(1.15rem, 1.8vw, 1.35rem);
   font-weight: 500;
-  letter-spacing: -0.012em;
-  line-height: 1.45;
+  letter-spacing: 0;
+  line-height: 1.5;
   text-transform: none;
-  max-width: 34rem;
+  max-width: 32rem;
 }
 
 .hypothesis-badge {
@@ -2758,18 +2758,23 @@ body {
 }
 
 .approval-layout {
-  display: grid;
-  gap: 1.15rem;
-  max-width: 52rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.15rem 1.75rem;
+  align-items: flex-end;
+  max-width: 44rem;
 }
 
 .approval-copy {
   min-width: 0;
-  max-width: 36rem;
+  flex: 1 1 18rem;
+  max-width: 28rem;
 }
 
 .approval-layout .approval-actions {
   margin-top: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
 }
 
 .approval-kicker {
@@ -2926,14 +2931,7 @@ body {
   }
 
   .approval-layout {
-    grid-template-columns: minmax(0, 1.4fr) auto;
-    align-items: end;
-    max-width: 56rem;
-  }
-
-  .approval-layout .approval-actions {
-    flex-direction: column;
-    min-width: 11rem;
+    max-width: 46rem;
   }
 }
 
