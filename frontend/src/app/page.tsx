@@ -40,6 +40,11 @@ import {
   provenanceMatchesIncident,
   selectRenderableProvenance,
 } from "@/lib/provenance-display";
+import {
+  canStartLiveIncident,
+  consumeTurnstileToken,
+  planStartRetry,
+} from "@/lib/turnstile-start";
 import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
 import type { ApprovalRequest, IncidentApprovalResponse, LiveProvenance, Scenario } from "@/lib/types";
 
@@ -224,12 +229,19 @@ export default function Home() {
     if (!selectedScenario) {
       return;
     }
-    if (turnstileSiteKey && !turnstileToken) {
+    if (
+      !canStartLiveIncident({
+        turnstileRequired: Boolean(turnstileSiteKey),
+        turnstileToken,
+      })
+    ) {
+      // Missing/expired token is a pre-incident gate — never a stream failure.
+      returnToStartForFreshTurnstile();
       setError("Complete the Cloudflare check before starting a live incident.");
       return;
     }
-    const capturedToken = turnstileToken;
-    setTurnstileToken(null);
+    const { captured, remaining } = consumeTurnstileToken(turnstileToken);
+    setTurnstileToken(remaining);
     const generation = supersedeStream();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -245,7 +257,7 @@ export default function Home() {
     try {
       await streamIncident({
         scenarioId: selectedScenario.id,
-        turnstileToken: capturedToken,
+        turnstileToken: captured,
         signal: controller.signal,
         onEvent: (event) => {
           if (generation !== generationRef.current) {
@@ -336,6 +348,30 @@ export default function Home() {
     }
   }
 
+  function returnToStartForFreshTurnstile() {
+    const plan = planStartRetry();
+    supersedeStream();
+    if (plan.clearLiveIncidentState) {
+      setLive(null);
+      setApproval(null);
+    }
+    if (plan.clearProvenance) {
+      clearProvenance();
+    }
+    if (plan.clearTurnstileToken) {
+      setTurnstileToken(null);
+    }
+    if (plan.remountTurnstile) {
+      setTurnstileReset((current) => current + 1);
+    }
+    setError(null);
+    setBusy(false);
+    if (plan.clearFailedWorkspace) {
+      setPhase("ready");
+    }
+    // selectedScenarioId intentionally preserved (plan.preserveSelectedScenario).
+  }
+
   function retry() {
     if (retryAction === "load") {
       setError(null);
@@ -344,7 +380,8 @@ export default function Home() {
       return;
     }
     if (retryAction === "start") {
-      void handleStart();
+      // Pre-incident or start failure: never re-POST with a consumed token.
+      returnToStartForFreshTurnstile();
       return;
     }
     void handleApproval(retryAction === "approve");
@@ -357,6 +394,8 @@ export default function Home() {
     clearProvenance();
     setError(null);
     setBusy(false);
+    setTurnstileToken(null);
+    setTurnstileReset((current) => current + 1);
     setPhase("ready");
   }
 

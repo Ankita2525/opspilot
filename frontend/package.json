@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:parser": "node --experimental-strip-types --test src/lib/sse-parser.test.ts src/lib/live-incident.test.ts src/lib/inspection.test.ts src/lib/command-center.test.ts src/lib/api-proxy.test.ts src/lib/api.test.ts src/lib/provenance-display.test.ts"
+    "test:parser": "node --experimental-strip-types --test src/lib/sse-parser.test.ts src/lib/live-incident.test.ts src/lib/inspection.test.ts src/lib/command-center.test.ts src/lib/api-proxy.test.ts src/lib/api.test.ts src/lib/provenance-display.test.ts src/lib/turnstile-start.test.ts"
   },
   "dependencies": {
     "next": "16.3.3",
