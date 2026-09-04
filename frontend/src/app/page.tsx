@@ -471,53 +471,62 @@ export default function Home() {
               ))}
             </div>
             <div className="lab-command">
-              {turnstileSiteKey ? (
-                <div className="turnstile-panel">
-                  <TurnstileWidget
-                    siteKey={turnstileSiteKey}
-                    onToken={setTurnstileToken}
-                    onStatus={setTurnstileStatus}
-                    resetSignal={turnstileReset}
-                  />
-                  {turnstileStatus === "loading" ? (
-                    <p className="turnstile-status">Verifying you are human…</p>
-                  ) : null}
-                  {turnstileStatus === "error" ? (
-                    <p className="turnstile-status">
-                      Cloudflare check failed. Retry the widget to continue.
-                    </p>
-                  ) : null}
-                  {turnstileStatus === "expired" ? (
-                    <p className="turnstile-status">
-                      Cloudflare check expired. Complete it again to start.
+              <div className="lab-command-row">
+                {turnstileSiteKey ? (
+                  <div className="turnstile-panel">
+                    <TurnstileWidget
+                      siteKey={turnstileSiteKey}
+                      onToken={setTurnstileToken}
+                      onStatus={setTurnstileStatus}
+                      resetSignal={turnstileReset}
+                    />
+                    {turnstileStatus === "loading" ? (
+                      <p className="turnstile-status">
+                        Verifying you are human…
+                      </p>
+                    ) : null}
+                    {turnstileStatus === "error" ? (
+                      <p className="turnstile-status">
+                        Cloudflare check failed. Retry the widget to continue.
+                      </p>
+                    ) : null}
+                    {turnstileStatus === "expired" ? (
+                      <p className="turnstile-status">
+                        Cloudflare check expired. Complete it again to start.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="lab-command-main">
+                  <button
+                    type="button"
+                    className="button-primary button-primary-hero"
+                    onClick={() => void handleStart()}
+                    disabled={
+                      busy ||
+                      !selectedScenario ||
+                      Boolean(turnstileSiteKey && !turnstileToken)
+                    }
+                  >
+                    <span className="button-play-icon" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 12 12"
+                        width="12"
+                        height="12"
+                        fill="currentColor"
+                      >
+                        <path d="M3 1.5v9l8-4.5-8-4.5z" />
+                      </svg>
+                    </span>
+                    Start live investigation
+                  </button>
+                  {selectedScenario ? (
+                    <p className="start-hint">
+                      Selected:{" "}
+                      {humanizeServiceName(selectedScenario.affected_service)}
                     </p>
                   ) : null}
                 </div>
-              ) : null}
-              <div className="lab-command-main">
-                <button
-                  type="button"
-                  className="button-primary button-primary-hero"
-                  onClick={() => void handleStart()}
-                  disabled={
-                    busy ||
-                    !selectedScenario ||
-                    Boolean(turnstileSiteKey && !turnstileToken)
-                  }
-                >
-                  <span className="button-play-icon" aria-hidden="true">
-                    <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-                      <path d="M3 1.5v9l8-4.5-8-4.5z" />
-                    </svg>
-                  </span>
-                  Start live investigation
-                </button>
-                {selectedScenario ? (
-                  <p className="start-hint">
-                    Selected:{" "}
-                    {humanizeServiceName(selectedScenario.affected_service)}
-                  </p>
-                ) : null}
               </div>
               <SafetyCallout />
             </div>
