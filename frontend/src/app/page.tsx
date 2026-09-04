@@ -3,20 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalPanel } from "@/components/ApprovalPanel";
-import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { ArchitectureSection } from "@/components/ArchitectureSection";
 import { CommandCenterHeader } from "@/components/CommandCenterHeader";
 import { HypothesisPanel } from "@/components/HypothesisPanel";
 import { IncidentHeader } from "@/components/IncidentHeader";
 import { InspectionSection } from "@/components/InspectionSection";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
+import { LandingHero } from "@/components/LandingHero";
 import { LifecycleTimeline } from "@/components/LifecycleTimeline";
 import { LiveProvenancePanel } from "@/components/LiveProvenancePanel";
 import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
+import { SafetyCallout } from "@/components/SafetyCallout";
 import { ScenarioCard } from "@/components/ScenarioCard";
 import { ServiceTopology } from "@/components/ServiceTopology";
 import { TelemetryBands } from "@/components/TelemetryBands";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import {
   getHealth,
   getIncidentProvenance,
@@ -445,18 +447,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        {phase === "ready" ? (
-          <section className="hero" aria-labelledby="product-heading">
-            <p className="hero-brand">OpsPilot</p>
-            <h1 id="product-heading">Autonomous Production Engineering Agent</h1>
-            <p className="hero-copy">
-              Start a live investigation against real sandbox services. OpsPilot
-              gathers runtime evidence, forms a hypothesis, requests human approval
-              for high-risk remediation, and verifies recovery with fresh telemetry.
-            </p>
-            <ArchitectureSection />
-          </section>
-        ) : null}
+        {phase === "ready" ? <LandingHero /> : null}
 
         {phase === "ready" && scenarios.length > 0 ? (
           <section aria-labelledby="scenario-heading">
@@ -479,7 +470,7 @@ export default function Home() {
                 />
               ))}
             </div>
-            <div className="start-row">
+            <div className="lab-command">
               {turnstileSiteKey ? (
                 <div className="turnstile-panel">
                   <TurnstileWidget
@@ -503,23 +494,35 @@ export default function Home() {
                   ) : null}
                 </div>
               ) : null}
-              <button
-                type="button"
-                className="button-primary button-primary-hero"
-                onClick={() => void handleStart()}
-                disabled={
-                  busy ||
-                  !selectedScenario ||
-                  Boolean(turnstileSiteKey && !turnstileToken)
-                }
-              >
-                Start live investigation
-              </button>
-              {selectedScenario ? (
-                <p className="start-hint">
-                  Selected: {humanizeServiceName(selectedScenario.affected_service)}
-                </p>
-              ) : null}
+              <div className="lab-command-main">
+                <button
+                  type="button"
+                  className="button-primary button-primary-hero"
+                  onClick={() => void handleStart()}
+                  disabled={
+                    busy ||
+                    !selectedScenario ||
+                    Boolean(turnstileSiteKey && !turnstileToken)
+                  }
+                >
+                  <span className="button-play-icon" aria-hidden="true">
+                    <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                      <path d="M3 1.5v9l8-4.5-8-4.5z" />
+                    </svg>
+                  </span>
+                  Start live investigation
+                </button>
+                {selectedScenario ? (
+                  <p className="start-hint">
+                    Selected:{" "}
+                    {humanizeServiceName(selectedScenario.affected_service)}
+                  </p>
+                ) : null}
+              </div>
+              <SafetyCallout />
+            </div>
+            <div className="architecture-below">
+              <ArchitectureSection />
             </div>
           </section>
         ) : null}
