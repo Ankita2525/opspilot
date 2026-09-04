@@ -131,6 +131,25 @@ describe("lifecycleSteps", () => {
     assert.equal(steps.find((step) => step.id === "approval")?.state, "pending");
     assert.equal(steps.find((step) => step.id === "failed")?.state, "failed");
   });
+
+  it("incident_started then incident_failed still uses Failed lifecycle", () => {
+    const steps = lifecycleSteps({
+      phase: "failed",
+      hasBaseline: true,
+      hasHypothesis: false,
+      hasApproval: false,
+      resolved: false,
+      failureStage: "generate_hypothesis",
+    });
+    assert.equal(
+      steps.find((step) => step.id === "investigation")?.state,
+      "failed",
+    );
+    assert.notEqual(
+      steps.find((step) => step.id === "approval")?.state,
+      "failed",
+    );
+  });
 });
 
 describe("resolveLifecycleFailureAnchor", () => {

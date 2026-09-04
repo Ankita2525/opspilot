@@ -45,6 +45,10 @@ import {
   consumeTurnstileToken,
   planStartRetry,
 } from "@/lib/turnstile-start";
+import {
+  isPreIncidentStartError,
+  type PreIncidentCode,
+} from "@/lib/start-rejection";
 import { isAbortError, STREAM_FAILURE_MESSAGE } from "@/lib/sse-parser";
 import type { ApprovalRequest, IncidentApprovalResponse, LiveProvenance, Scenario } from "@/lib/types";
 
@@ -75,6 +79,11 @@ export default function Home() {
   const [retryAction, setRetryAction] = useState<
     "load" | "start" | "approve" | "reject"
   >("load");
+  const [startGateDetail, setStartGateDetail] = useState<string | null>(null);
+  const [sessionStartBlocked, setSessionStartBlocked] = useState(false);
+  const [startGateCode, setStartGateCode] = useState<PreIncidentCode | null>(
+    null,
+  );
   const generationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const provenanceIncidentRef = useRef<string | null>(null);
@@ -238,6 +247,8 @@ export default function Home() {
       // Missing/expired token is a pre-incident gate — never a stream failure.
       returnToStartForFreshTurnstile();
       setError("Complete the Cloudflare check before starting a live incident.");
+      setStartGateDetail(null);
+      setStartGateCode(null);
       return;
     }
     const { captured, remaining } = consumeTurnstileToken(turnstileToken);
@@ -247,6 +258,8 @@ export default function Home() {
     abortRef.current = controller;
 
     setError(null);
+    setStartGateDetail(null);
+    setStartGateCode(null);
     setRetryAction("start");
     setBusy(true);
     setApproval(null);
@@ -254,6 +267,7 @@ export default function Home() {
     setLive(createLiveIncidentState());
     setPhase("investigating");
 
+    let remountTurnstile = true;
     try {
       await streamIncident({
         scenarioId: selectedScenario.id,
@@ -305,6 +319,25 @@ export default function Home() {
       if (generation !== generationRef.current || isAbortError(cause)) {
         return;
       }
+      if (isPreIncidentStartError(cause)) {
+        // No incident existed — return to start screen with truthful gate UX.
+        remountTurnstile = cause.remountTurnstile;
+        setLive(null);
+        setApproval(null);
+        clearProvenance();
+        setPhase("ready");
+        setError(cause.message);
+        setStartGateDetail(cause.detail);
+        setStartGateCode(cause.code);
+        setRetryAction("start");
+        if (cause.disableStart) {
+          setSessionStartBlocked(true);
+        }
+        setTurnstileToken(null);
+        return;
+      }
+      setStartGateDetail(null);
+      setStartGateCode(null);
       setError(STREAM_FAILURE_MESSAGE);
       setPhase("failed");
       setLive((current) =>
@@ -318,8 +351,10 @@ export default function Home() {
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
+        if (remountTurnstile) {
+          setTurnstileReset((current) => current + 1);
+        }
       }
-      setTurnstileReset((current) => current + 1);
     }
   }
 
@@ -349,6 +384,15 @@ export default function Home() {
   }
 
   function returnToStartForFreshTurnstile() {
+    if (sessionStartBlocked) {
+      // Session remains capped — do not remount or imply another start is available.
+      setLive(null);
+      setApproval(null);
+      clearProvenance();
+      setBusy(false);
+      setPhase("ready");
+      return;
+    }
     const plan = planStartRetry();
     supersedeStream();
     if (plan.clearLiveIncidentState) {
@@ -365,6 +409,8 @@ export default function Home() {
       setTurnstileReset((current) => current + 1);
     }
     setError(null);
+    setStartGateDetail(null);
+    setStartGateCode(null);
     setBusy(false);
     if (plan.clearFailedWorkspace) {
       setPhase("ready");
@@ -498,10 +544,18 @@ export default function Home() {
         {error ? (
           <div className="error-banner" role="alert">
             <p>{error}</p>
+            {startGateDetail ? (
+              <p className="status-copy">{startGateDetail}</p>
+            ) : null}
             <div className="error-actions">
-              <button type="button" className="button-secondary" onClick={retry}>
-                Retry
-              </button>
+              {!(
+                sessionStartBlocked ||
+                startGateCode === "session_live_incident_limit"
+              ) ? (
+                <button type="button" className="button-secondary" onClick={retry}>
+                  Retry
+                </button>
+              ) : null}
               {phase !== "ready" ? (
                 <button
                   type="button"
@@ -584,6 +638,7 @@ export default function Home() {
                     onClick={() => void handleStart()}
                     disabled={
                       busy ||
+                      sessionStartBlocked ||
                       !selectedScenario ||
                       Boolean(turnstileSiteKey && !turnstileToken)
                     }
@@ -604,6 +659,11 @@ export default function Home() {
                     <p className="start-hint">
                       Selected:{" "}
                       {humanizeServiceName(selectedScenario.affected_service)}
+                    </p>
+                  ) : null}
+                  {sessionStartBlocked ? (
+                    <p className="start-hint">
+                      Live demo limit reached for this browser session.
                     </p>
                   ) : null}
                 </div>
