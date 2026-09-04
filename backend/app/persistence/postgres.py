@@ -12,6 +12,7 @@ from backend.app.persistence.models import (
     IncidentRecord,
     ProvenanceRecord,
 )
+from backend.app.persistence.incident_status import list_expired_status_exclusion_sql
 
 SAVE_INCIDENT_SQL = """
 INSERT INTO incidents (
@@ -188,12 +189,12 @@ WHERE incident_id = %s
 ORDER BY created_at ASC, evaluation_id ASC
 """
 
-LIST_EXPIRED_INCIDENTS_SQL = """
+LIST_EXPIRED_INCIDENTS_SQL = f"""
 SELECT incident_id, session_id
 FROM incidents
 WHERE expires_at IS NOT NULL
   AND expires_at <= %s
-  AND status NOT IN ('resolved', 'rejected', 'remediation_failed', 'blocked_by_telemetry', 'abandoned', 'expired')
+  AND status NOT IN ({list_expired_status_exclusion_sql()})
 ORDER BY expires_at ASC
 """
 

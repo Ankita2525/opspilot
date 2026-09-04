@@ -36,6 +36,7 @@ class SandboxControlClient:
         *,
         control_token: str | None = None,
         base_url: str | None = None,
+        timeout_seconds: float = 10.0,
     ) -> SandboxControlClient:
         resolved_url = base_url or os.environ.get(
             mapping.service_base_url_env,
@@ -52,7 +53,8 @@ class SandboxControlClient:
                 service=mapping.affected_service,
                 base_url=resolved_url.rstrip("/"),
                 control_token=token,
-            )
+            ),
+            timeout_seconds=timeout_seconds,
         )
 
     def _headers(self) -> dict[str, str]:

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from backend.app.persistence.models import AuditRecord
 from backend.app.persistence.repository import OpsPilotRepository
+from backend.app.persistence.incident_status import TERMINAL_INCIDENT_STATUSES
 from backend.app.sandbox.fault_reconcile import (
     restore_baseline_for_scenario,
     restore_all_sandbox_baselines,
@@ -24,20 +25,6 @@ from backend.app.sandbox.fault_reconcile import (
 from backend.app.sandbox.lease_store import GlobalSandboxLeaseStore
 
 logger = logging.getLogger(__name__)
-
-TERMINAL_INCIDENT_STATUSES = frozenset(
-    {
-        "resolved",
-        "rejected",
-        "remediation_failed",
-        "blocked_by_telemetry",
-        "abandoned",
-        "expired",
-        "cleanup_failed",
-        "failed",
-        "timed_out",
-    }
-)
 
 
 class IncidentCleanupWorker:
@@ -100,8 +87,13 @@ class IncidentCleanupWorker:
     def _cleanup_sync(self) -> int:
         cleaned = 0
         self._renew_active_leases()
-        if self._hardening is not None and not self._lease_store.is_quarantined():
-            safe_expire_stale_leases(self._hardening)
+        if self._hardening is not None:
+            # Lease-driven: recovers quarantine via verifying contract, or
+            # expires stale active leases after baseline clear.
+            safe_expire_stale_leases(
+                self._hardening,
+                repository=self._repository,
+            )
         elif not self._lease_store.is_quarantined():
             self._lease_store.expire_stale()
         now = datetime.now(UTC)
