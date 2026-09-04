@@ -24,8 +24,15 @@ export function ApprovalPanel({
   const version = proposedVersion ?? approvalRequest.version;
 
   return (
-    <section className="panel approval-panel" aria-labelledby="approval-heading">
-      <h2 id="approval-heading">Recommended action</h2>
+    <section
+      className="panel approval-panel"
+      aria-labelledby="approval-heading"
+    >
+      <p className="approval-kicker">Human approval required</p>
+      <h2 id="approval-heading" className="sr-only">
+        Human approval required
+      </h2>
+      <p className="skills-heading">Proposed remediation</p>
       <p className="approval-action">
         {actionLabel} {version}
       </p>
@@ -34,18 +41,21 @@ export function ApprovalPanel({
         <span>Risk</span>
       </p>
       <p className="approval-explain">
-        This action changes production state and requires human approval.
+        Production state will not change until this action is explicitly
+        approved.
       </p>
-      <p className="approval-message">{approvalRequest.message}</p>
+      {approvalRequest.message ? (
+        <p className="approval-message">{approvalRequest.message}</p>
+      ) : null}
       <div className="approval-actions">
         <button
           type="button"
-          className="button-primary"
+          className="button-approve"
           onClick={onApprove}
           disabled={busy}
           aria-busy={busy}
         >
-          {busy ? "Submitting…" : "Approve Rollback"}
+          {busy ? "Submitting…" : "Approve rollback"}
         </button>
         <button
           type="button"

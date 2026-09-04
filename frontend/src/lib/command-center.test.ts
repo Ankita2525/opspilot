@@ -64,4 +64,18 @@ describe("lifecycleSteps", () => {
     });
     assert.equal(steps.at(-1)?.state, "done");
   });
+
+  it("includes investigation stage and approval tone", () => {
+    const steps = lifecycleSteps({
+      phase: "active",
+      hasBaseline: true,
+      hasHypothesis: true,
+      hasApproval: true,
+      resolved: false,
+    });
+    assert.equal(steps.some((step) => step.id === "investigation"), true);
+    const approval = steps.find((step) => step.id === "approval");
+    assert.equal(approval?.state, "active");
+    assert.equal(approval?.tone, "approval");
+  });
 });

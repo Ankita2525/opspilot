@@ -5,7 +5,19 @@ type Props = {
   loading?: boolean;
 };
 
-function row(label: string, value: string | number | boolean | null | undefined) {
+type ProvenanceRecord = LiveProvenance & {
+  fallback_used?: boolean;
+  primary_model?: string | null;
+  fallback_model?: string | null;
+  fallback_reason?: string | null;
+  final_model?: string | null;
+};
+
+function row(
+  label: string,
+  value: string | number | boolean | null | undefined,
+  mono = false,
+) {
   const display =
     value === null || value === undefined
       ? "Unavailable"
@@ -17,37 +29,46 @@ function row(label: string, value: string | number | boolean | null | undefined)
   return (
     <div className="provenance-row">
       <dt>{label}</dt>
-      <dd>{display}</dd>
+      <dd className={mono ? "type-mono" : undefined}>{display}</dd>
     </div>
   );
 }
 
 export function LiveProvenancePanel({ provenance, loading }: Props) {
+  const extended = provenance as ProvenanceRecord | null;
   return (
     <section className="panel provenance-panel" aria-label="Live run provenance">
       <h2>Live run provenance</h2>
       {loading ? (
         <p className="status-copy">Loading provenance…</p>
       ) : !provenance ? (
-        <p className="status-copy">Provenance available after live investigation starts.</p>
+        <p className="status-copy">
+          Provenance available after live investigation starts.
+        </p>
       ) : (
         <dl className="provenance-grid">
           {row("Telemetry mode", provenance.telemetry_mode.toUpperCase())}
           {row("Environment", provenance.environment)}
-          {row("Service", provenance.service)}
-          {row("Revision", provenance.service_revision)}
-          {row("Baseline samples", provenance.baseline?.sample_count ?? null)}
-          {row("Degraded samples", provenance.degraded?.sample_count ?? null)}
-          {row("Recovery samples", provenance.recovery?.sample_count ?? null)}
-          {row(
-            "Latest metric",
-            provenance.recovery?.latest_metric_timestamp ?? null,
-          )}
+          {row("Service", provenance.service, true)}
+          {row("Revision", provenance.service_revision, true)}
           {row("Diagnosis provider", provenance.diagnosis?.provider ?? null)}
-          {row(
-            "Ground truth",
-            provenance.ground_truth_visible_to_agent ? "VISIBLE" : "HIDDEN FROM AGENT ✓",
-          )}
+          {row("Model", provenance.diagnosis?.model ?? null, true)}
+          {extended?.fallback_used
+            ? row("Primary model", extended.primary_model ?? null, true)
+            : null}
+          {extended?.fallback_used
+            ? row("Fallback model", extended.fallback_model ?? null, true)
+            : null}
+          {extended?.fallback_used
+            ? row("Fallback reason", extended.fallback_reason ?? null)
+            : null}
+          {extended?.fallback_used
+            ? row(
+                "Final model",
+                extended.final_model ?? provenance.diagnosis?.model ?? null,
+                true,
+              )
+            : null}
           {row(
             "Human approval",
             provenance.remediation?.approval_required
@@ -69,6 +90,13 @@ export function LiveProvenancePanel({ provenance, loading }: Props) {
             provenance.evidence_manifest_hash
               ? `${provenance.evidence_manifest_hash.slice(0, 12)}…`
               : null,
+            true,
+          )}
+          {row(
+            "Ground truth",
+            provenance.ground_truth_visible_to_agent
+              ? "VISIBLE"
+              : "HIDDEN FROM AGENT ✓",
           )}
         </dl>
       )}

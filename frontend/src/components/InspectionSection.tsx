@@ -265,11 +265,15 @@ function EvidencePanel({
           </h3>
           <ol className="bounded-evidence">
             {evidence.map((item, index) => (
-              <li key={`${item.evidenceType}-${index}`}>
+              <li key={`${item.evidenceType}-${index}`} className="evidence-card">
                 <span className="evidence-type">
                   {evidenceTypeLabel(item.evidenceType)}
                 </span>
-                <p>{item.summary}</p>
+                <p className="evidence-summary">{item.summary}</p>
+                <details className="evidence-raw">
+                  <summary>Raw details</summary>
+                  <pre className="evidence-raw-body type-mono">{item.summary}</pre>
+                </details>
               </li>
             ))}
           </ol>

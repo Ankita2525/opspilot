@@ -10,9 +10,8 @@ import { IncidentHeader } from "@/components/IncidentHeader";
 import { InspectionSection } from "@/components/InspectionSection";
 import { InvestigationTimeline } from "@/components/InvestigationTimeline";
 import { LandingHero } from "@/components/LandingHero";
-import { LifecycleTimeline } from "@/components/LifecycleTimeline";
+import { LifecycleRail } from "@/components/LifecycleRail";
 import { LiveProvenancePanel } from "@/components/LiveProvenancePanel";
-import { MetricCard } from "@/components/MetricCard";
 import { RecoveryPanel } from "@/components/RecoveryPanel";
 import { SafetyCallout } from "@/components/SafetyCallout";
 import { ScenarioCard } from "@/components/ScenarioCard";
@@ -30,11 +29,7 @@ import {
 import { lifecycleSteps, resolveLabStatus } from "@/lib/command-center";
 import type { Phase } from "@/lib/command-center-types";
 import { streamIncident } from "@/lib/incident-stream";
-import {
-  formatErrorRate,
-  formatLatency,
-  humanizeServiceName,
-} from "@/lib/labels";
+import { humanizeServiceName } from "@/lib/labels";
 import {
   applyInvestigationEvent,
   createLiveIncidentState,
@@ -395,10 +390,6 @@ export default function Home() {
       <CommandCenterHeader
         labStatus={labStatus}
         telemetryMode={telemetryMode}
-        service={inWorkspace ? service : undefined}
-        title={inWorkspace ? title : undefined}
-        revision={live?.approval?.version ?? null}
-        phase={inWorkspace ? phase : undefined}
       />
 
       <main className="workspace command-workspace">
@@ -410,10 +401,9 @@ export default function Home() {
             live={live?.streaming === true}
             telemetryMode={telemetryMode}
             eventCount={live?.eventCount}
+            revision={live?.approval?.version ?? provenance?.service_revision ?? null}
           />
         ) : null}
-
-        {inWorkspace ? <StoryRail phase={phase} /> : null}
 
         {error ? (
           <div className="error-banner" role="alert">
@@ -538,28 +528,7 @@ export default function Home() {
 
         {live && inWorkspace ? (
           <>
-            <ServiceTopology affectedService={service} phase={topologyPhase} />
-            <TelemetryBands
-              mode={telemetryMode}
-              baseline={
-                live.baseline
-                  ? {
-                      ...live.baseline,
-                      sample_count: provenance?.baseline?.sample_count,
-                    }
-                  : null
-              }
-              degraded={
-                live.degraded
-                  ? {
-                      ...live.degraded,
-                      sample_count: provenance?.degraded?.sample_count,
-                    }
-                  : null
-              }
-              recovery={recoveryWindow}
-            />
-            <LifecycleTimeline
+            <LifecycleRail
               steps={lifecycleSteps({
                 phase,
                 hasBaseline: Boolean(live.baseline),
@@ -568,49 +537,48 @@ export default function Home() {
                 resolved: phase === "resolved",
               })}
             />
-            {originalMetrics ? (
-              <div className="metric-grid">
-                <MetricCard
-                  label="p95 latency"
-                  value={formatLatency(originalMetrics.p95_latency_ms)}
-                  hint={
-                    phase === "resolved" ||
-                    phase === "rejected" ||
-                    phase === "complete"
-                      ? "At detection"
-                      : undefined
-                  }
-                  tone="incident"
-                />
-                <MetricCard
-                  label="Error rate"
-                  value={formatErrorRate(originalMetrics.error_rate_percent)}
-                  hint={
-                    phase === "resolved" ||
-                    phase === "rejected" ||
-                    phase === "complete"
-                      ? "At detection"
-                      : undefined
-                  }
-                  tone="incident"
-                />
-              </div>
-            ) : null}
-
-              <div
-                className={
-                  live.hypothesis
-                    ? "workspace-grid"
-                    : "workspace-grid workspace-grid-solo"
+            <div className="incident-ops-grid">
+              <ServiceTopology affectedService={service} phase={topologyPhase} />
+              <TelemetryBands
+                mode={telemetryMode}
+                baseline={
+                  live.baseline
+                    ? {
+                        ...live.baseline,
+                        sample_count: provenance?.baseline?.sample_count,
+                      }
+                    : null
                 }
-              >
+                degraded={
+                  live.degraded
+                    ? {
+                        ...live.degraded,
+                        sample_count: provenance?.degraded?.sample_count,
+                      }
+                    : null
+                }
+                recovery={recoveryWindow}
+              />
+            </div>
+
+            <div
+              className={
+                live.hypothesis
+                  ? "workspace-grid"
+                  : "workspace-grid workspace-grid-solo"
+              }
+            >
               <InvestigationTimeline
                 steps={timelineSteps(live)}
                 skills={live.selectedSkills}
                 symptomSummary={live.symptomSummary}
               />
               {live.hypothesis ? (
-                <HypothesisPanel hypothesis={live.hypothesis} />
+                <HypothesisPanel
+                  hypothesis={live.hypothesis}
+                  skills={live.selectedSkills}
+                  evidenceCount={live.evidence.length}
+                />
               ) : null}
             </div>
 
@@ -630,10 +598,21 @@ export default function Home() {
             {approval &&
             originalMetrics &&
             (phase === "resolved" || phase === "rejected") ? (
-              <RecoveryPanel original={originalMetrics} approval={approval} />
+              <RecoveryPanel
+                original={originalMetrics}
+                approval={approval}
+                freshTelemetryVerified={
+                  provenance?.recovery?.all_samples_post_remediation ??
+                  provenance?.recovery?.verified ??
+                  null
+                }
+              />
             ) : null}
 
-            <LiveProvenancePanel provenance={provenance} loading={provenanceLoading} />
+            <LiveProvenancePanel
+              provenance={provenance}
+              loading={provenanceLoading}
+            />
 
             <InspectionSection
               symptomSummary={live.symptomSummary}
@@ -642,7 +621,9 @@ export default function Home() {
               lifecyclePhase={headerPhase}
             />
 
-            {phase === "resolved" || phase === "rejected" || phase === "complete" ? (
+            {phase === "resolved" ||
+            phase === "rejected" ||
+            phase === "complete" ? (
               <div className="reset-row">
                 <button
                   type="button"
@@ -686,48 +667,4 @@ function toApprovalRequest(
     risk_level: approval.riskLevel,
     message: approval.message,
   };
-}
-
-function StoryRail({ phase }: { phase: Phase }) {
-  const investigated =
-    phase === "active" ||
-    phase === "complete" ||
-    phase === "resolved" ||
-    phase === "rejected";
-  const decided = phase === "resolved" || phase === "rejected" || phase === "complete";
-  const steps = [
-    {
-      id: "broke",
-      label: "Something broke",
-      done: phase !== "ready" && phase !== "loading",
-    },
-    {
-      id: "investigated",
-      label: "OpsPilot investigated",
-      done: investigated,
-    },
-    {
-      id: "approval",
-      label: "Human approval",
-      done: phase === "resolved" || phase === "rejected",
-    },
-    {
-      id: "outcome",
-      label:
-        phase === "rejected" || phase === "complete"
-          ? "Unchanged"
-          : "Service recovers",
-      done: decided,
-    },
-  ];
-
-  return (
-    <ol className="story-rail" aria-label="Incident workflow">
-      {steps.map((step) => (
-        <li key={step.id} className={step.done ? "done" : undefined}>
-          {step.label}
-        </li>
-      ))}
-    </ol>
-  );
 }
