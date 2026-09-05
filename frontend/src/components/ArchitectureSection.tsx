@@ -15,7 +15,7 @@ export function ArchitectureSection() {
           <h3>Public ephemeral live incident lab</h3>
           <p>
             Cloud Run multi-container runtime with the same service and telemetry
-            boundaries, real controlled faults, and live-mode invariants — using an
+            boundaries, real controlled faults, and live-mode invariants - using an
             ephemeral runtime that scales to zero when the demo is idle to avoid
             continuously allocated infrastructure.
           </p>

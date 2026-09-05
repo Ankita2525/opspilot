@@ -4,7 +4,7 @@
  */
 
 export type StartRetryPlan = {
-  /** Never stream immediately on Retry — require a fresh challenge first. */
+  /** Never stream immediately on Retry - require a fresh challenge first. */
   nextAction: "return_to_start";
   clearFailedWorkspace: boolean;
   clearLiveIncidentState: boolean;

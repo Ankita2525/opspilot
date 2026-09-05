@@ -75,7 +75,7 @@ export function resolveLifecycleFailureAnchor(input: {
   ) {
     return "approval";
   }
-  // Post-approval verification/recovery failure — do not mark approval failed.
+  // Post-approval verification/recovery failure - do not mark approval failed.
   if (
     stage === "verification" ||
     stage === "recovery" ||

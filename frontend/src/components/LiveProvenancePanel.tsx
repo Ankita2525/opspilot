@@ -29,7 +29,7 @@ function row(
       : typeof value === "boolean"
         ? value
           ? "✓"
-          : "—"
+          : "-"
         : String(value);
   return (
     <div className="provenance-row">

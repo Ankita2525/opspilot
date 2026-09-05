@@ -1,5 +1,5 @@
 /**
- * Map approval API results to truthful terminal UI — never conflate
+ * Map approval API results to truthful terminal UI - never conflate
  * "approved but recovery unverified" with human rejection.
  */
 
@@ -40,7 +40,7 @@ export function approvalTerminalKind(
 
 /**
  * Terminal command-center phase after submitApproval.
- * Rejected ONLY for true human rejection — never for remediation_failed.
+ * Rejected ONLY for true human rejection - never for remediation_failed.
  */
 export function phaseFromApprovalResponse(
   result: IncidentApprovalResponse,

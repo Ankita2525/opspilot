@@ -30,7 +30,7 @@
   --radius-md: 12px;
   --radius-lg: 16px;
 
-  /* Legacy aliases — keep incident workspace readable under dark theme */
+  /* Legacy aliases - keep incident workspace readable under dark theme */
   --background: var(--bg);
   --foreground: var(--text);
   --muted: var(--text-muted);
@@ -266,41 +266,6 @@ body {
   margin: 0;
   color: var(--text-muted);
   font-size: 1.02rem;
-}
-
-.story-rail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem 1.1rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-}
-
-.story-rail li {
-  position: relative;
-  padding-left: 1rem;
-}
-
-.story-rail li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.45rem;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 99px;
-  background: var(--border-strong);
-}
-
-.story-rail li.done {
-  color: var(--text);
-}
-
-.story-rail li.done::before {
-  background: var(--blue);
 }
 
 .panel {
@@ -2183,7 +2148,7 @@ body {
   }
 }
 
-/* ===== Phase 2 — Incident operations workspace ===== */
+/* ===== Phase 2 - Incident operations workspace ===== */
 
 .incident-command {
   display: grid;

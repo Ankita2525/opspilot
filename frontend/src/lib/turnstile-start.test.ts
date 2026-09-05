@@ -63,7 +63,7 @@ describe("consumeTurnstileToken", () => {
     assert.equal(first.captured, "tok-1");
     assert.equal(first.remaining, null);
 
-    // Retry sees null remaining — fresh Turnstile required before stream.
+    // Retry sees null remaining - fresh Turnstile required before stream.
     assert.equal(
       canStartLiveIncident({
         turnstileRequired: true,

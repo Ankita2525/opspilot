@@ -1,4 +1,4 @@
-# Public Ephemeral Live Incident Lab — Cloud Run Profile
+# Public Ephemeral Live Incident Lab - Cloud Run Profile
 
 This deployment profile is **separate** from the [full production architecture](../../docker-compose.prod.yml)
 (VM + Caddy + segmented Docker networks). It exists for the public portfolio demo.
@@ -19,7 +19,7 @@ This deployment profile is **separate** from the [full production architecture](
 
 | Container | Role | Listen | Client URL |
 |-----------|------|--------|------------|
-| `opspilot` | **Ingress** — FastAPI API | `0.0.0.0:8000` | public |
+| `opspilot` | **Ingress** - FastAPI API | `0.0.0.0:8000` | public |
 | `checkout-api` | Sidecar | `0.0.0.0:8081` | `http://127.0.0.1:8081` |
 | `auth-service` | Sidecar | `0.0.0.0:8082` | `http://127.0.0.1:8082` |
 | `payments-service` | Sidecar | `0.0.0.0:8083` | `http://127.0.0.1:8083` |
@@ -122,7 +122,7 @@ gcloud run services replace \
 
 | Endpoint | Role | Cloud Run probe? |
 |----------|------|------------------|
-| `GET /health` | Process-local: FastAPI accepts HTTP. **No** DB/HTTP/Loki/Prometheus/lease I/O. | **Yes** — startup + liveness |
+| `GET /health` | Process-local: FastAPI accepts HTTP. **No** DB/HTTP/Loki/Prometheus/lease I/O. | **Yes** - startup + liveness |
 | `GET /healthz` | Internal alias only. **Do not** use publicly: Google Frontend intercepted exact `/healthz` with HTML 404 (rev `00004` evidence). | No |
 | `GET /ready` | Deep diagnostic dependency health (async, cached, degraded-tolerant). Loki uses authenticated `/loki/api/v1/labels`. | **No** |
 
@@ -171,7 +171,7 @@ When **no** healthy revision exists, step 1 cannot pin traffic. In that case
 + `/ready` on the service URL immediately after Ready=True, then keep traffic on
 that revision before further replaces.
 
-Real replace (only after A–G pass, and only when explicitly requested):
+Real replace (only after A-G pass, and only when explicitly requested):
 
 ```bash
 gcloud run services replace \
@@ -239,7 +239,7 @@ Checkout safely reuses `opspilot-database-url`: production already maps
 
 | Component | Delivery |
 |-----------|----------|
-| **Prometheus** | Secret Manager volume mount (`opspilot-prometheus-config`) — Prometheus requires a file |
+| **Prometheus** | Secret Manager volume mount (`opspilot-prometheus-config`) - Prometheus requires a file |
 | **OTEL collector** | Non-secret YAML embedded in `OTEL_COLLECTOR_CONFIG` env var; loaded via `--config=env:OTEL_COLLECTOR_CONFIG`. Grafana auth substituted at runtime via `${OPSPILOT_LOKI_AUTHORIZATION}` |
 
 Create the Prometheus config secret externally:
