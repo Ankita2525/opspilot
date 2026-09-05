@@ -31,7 +31,7 @@ export function humanApprovalLabel(input: {
   phase?: string | null;
 }): HumanApprovalLabel {
   const status = (input.approvalStatus ?? "").toLowerCase();
-  // Prefer explicit approval outcome over phase — phase may mean recovery
+  // Prefer explicit approval outcome over phase - phase may mean recovery
   // failed after an approved rollback (not a human rejection).
   if (status === "rejected") {
     return "REJECTED";
@@ -76,7 +76,7 @@ type ProvenanceIdentity = {
 
 /**
  * Renderable provenance for the active incident only.
- * Early failures (no incident id yet / no provenance yet) must return null —
+ * Early failures (no incident id yet / no provenance yet) must return null -
  * never the prior incident's Checkout (or any other) payload.
  */
 export function selectRenderableProvenance<T extends ProvenanceIdentity>(

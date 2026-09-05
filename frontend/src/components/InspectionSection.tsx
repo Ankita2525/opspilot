@@ -249,7 +249,7 @@ function EvidencePanel({
       aria-labelledby="inspection-tab-evidence"
     >
       <p className="inspection-caption">
-        Bounded evidence used for diagnosis — not a causal proof.
+        Bounded evidence used for diagnosis - not a causal proof.
       </p>
       {symptomSummary ? (
         <div className="evidence-symptoms">

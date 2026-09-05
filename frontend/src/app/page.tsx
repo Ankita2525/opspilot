@@ -249,7 +249,7 @@ export default function Home() {
         turnstileToken,
       })
     ) {
-      // Missing/expired token is a pre-incident gate — never a stream failure.
+      // Missing/expired token is a pre-incident gate - never a stream failure.
       returnToStartForFreshTurnstile();
       setError("Complete the Cloudflare check before starting a live incident.");
       setStartGateDetail(null);
@@ -308,7 +308,7 @@ export default function Home() {
             }
           }
           if (event.event_type === "investigation_blocked") {
-            setError("Investigation blocked — telemetry unavailable for live mode.");
+            setError("Investigation blocked - telemetry unavailable for live mode.");
             setPhase("blocked");
             setBusy(false);
           }
@@ -325,7 +325,7 @@ export default function Home() {
         return;
       }
       if (isPreIncidentStartError(cause)) {
-        // No incident existed — return to start screen with truthful gate UX.
+        // No incident existed - return to start screen with truthful gate UX.
         remountTurnstile = cause.remountTurnstile;
         setLive(null);
         setApproval(null);
@@ -399,7 +399,7 @@ export default function Home() {
 
   function returnToStartForFreshTurnstile() {
     if (sessionStartBlocked) {
-      // Session remains capped — do not remount or imply another start is available.
+      // Session remains capped - do not remount or imply another start is available.
       setLive(null);
       setApproval(null);
       clearProvenance();
@@ -482,7 +482,7 @@ export default function Home() {
         : phase;
   const sandboxBanner =
     sandboxState === "sandbox_busy"
-      ? "Live sandbox is busy — another session is active."
+      ? "Live sandbox is busy - another session is active."
       : sandboxState === "ai_provider_unavailable" ||
           sandboxState === "ai_capacity_exhausted"
         ? "Live AI capacity is temporarily unavailable."

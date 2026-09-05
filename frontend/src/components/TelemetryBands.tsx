@@ -144,7 +144,7 @@ export function TelemetryBands({ baseline, degraded, recovery, mode }: Props) {
       <section className="panel telemetry-panel" aria-label="Telemetry">
         <h2>Telemetry</h2>
         <p className="inspection-caption">
-          Deterministic reference evaluation uses fixture telemetry — not live
+          Deterministic reference evaluation uses fixture telemetry - not live
           runtime observations.
         </p>
       </section>

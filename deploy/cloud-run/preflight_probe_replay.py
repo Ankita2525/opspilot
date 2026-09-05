@@ -106,7 +106,7 @@ def main() -> int:
     parser.parse_args()
     try:
         asyncio.run(_run())
-    except Exception as exc:  # noqa: BLE001 — preflight reports failure clearly
+    except Exception as exc:  # noqa: BLE001 - preflight reports failure clearly
         print(f"probe_replay_failed: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         run_loki_preflight(project=args.project, vars_file=args.vars_file)
-    except Exception as exc:  # noqa: BLE001 — preflight surfaces one clear failure
+    except Exception as exc:  # noqa: BLE001 - preflight surfaces one clear failure
         print("Loki auth/query preflight: FAIL")
         print(str(exc))
         return 1
