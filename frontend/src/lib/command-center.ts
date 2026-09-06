@@ -210,7 +210,7 @@ export function lifecycleSteps(input: {
     },
     {
       id: "recovery",
-      label: "Recovery verified",
+      label: "Recovery verification",
       state: input.resolved
         ? "done"
         : remediationDone && failed
