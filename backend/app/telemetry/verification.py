@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.app.telemetry.clients import PrometheusClient
 from backend.app.telemetry.health import with_bounded_retry
+from backend.app.telemetry.models import SANDBOX_SERVICE_THRESHOLDS
 from sandbox.scenarios import LiveScenarioMapping
 from sandbox.traffic.workload import WorkloadDriver, WorkloadSample
 
@@ -50,16 +51,17 @@ def summarize_samples(samples: list[WorkloadSample]) -> dict[str, Any]:
     }
 
 
-def meets_baseline_recovery(
+def meets_service_recovery(
+    service: str,
     observed: dict[str, Any],
-    baseline: dict[str, Any],
 ) -> bool:
-    baseline_p95 = baseline.get("p95_latency_ms", 0)
-    baseline_error = baseline.get("error_rate_percent", 100.0)
+    thresholds = SANDBOX_SERVICE_THRESHOLDS.get(service)
+    if thresholds is None:
+        raise ValueError(f"Unknown service: {service}")
     return (
         observed.get("request_count", 0) > 0
-        and observed["error_rate_percent"] <= baseline_error + 1.0
-        and observed["p95_latency_ms"] <= max(baseline_p95 * 2, baseline_p95 + 50)
+        and observed["error_rate_percent"] <= thresholds.max_error_rate_percent
+        and observed["p95_latency_ms"] <= thresholds.max_p95_latency_ms
     )
 
 
@@ -125,7 +127,10 @@ class RecoveryVerifier:
             }
             fresh_observations.append(observation)
 
-            if meets_baseline_recovery(workload_summary, baseline_summary):
+            if meets_service_recovery(
+                mapping.affected_service,
+                workload_summary,
+            ):
                 consecutive_healthy += 1
             else:
                 consecutive_healthy = 0
