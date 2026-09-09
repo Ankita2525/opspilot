@@ -691,6 +691,26 @@ def create_app(
         check_rate_limit(request, resolved_hardening)
         demo_session = resolve_demo_session(request, resolved_hardening, response)
         session = store.get_optional(incident_id)
+        record = _require_incident_record(resolved_repository, incident_id)
+        owner_id = (
+            (session.owner_session_id if session is not None else None)
+            or record.session_id
+        )
+        require_incident_owner(
+            owner_session_id=owner_id,
+            requester_session_id=demo_session.session_id,
+            enforce=resolved_hardening.enforce_live_guards,
+        )
+        lease_renewed = renew_global_lease(
+            hardening=resolved_hardening,
+            session_id=demo_session.session_id,
+            incident_id=incident_id,
+        )
+        if not lease_renewed:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "sandbox_lease_lost"},
+            )
         if session is None:
             session = _reconstruct_approval_session(
                 incident_id=incident_id,
@@ -703,20 +723,6 @@ def create_app(
                 live_reconciler=live_reconciler,
                 provenance_store=provenance_store,
             )
-        record = resolved_repository.get_incident(incident_id)
-        owner_id = session.owner_session_id or (
-            record.session_id if record is not None else None
-        )
-        require_incident_owner(
-            owner_session_id=owner_id,
-            requester_session_id=demo_session.session_id,
-            enforce=resolved_hardening.enforce_live_guards,
-        )
-        renew_global_lease(
-            hardening=resolved_hardening,
-            session_id=demo_session.session_id,
-            incident_id=incident_id,
-        )
         try:
             resumed = session.coordinator.resume(
                 remediation_thread_id=session.remediation_thread_id,

@@ -260,3 +260,123 @@ def test_prod_compose_does_not_publish_internal_ports() -> None:
     assert "8081:8081" not in content
     assert "9090:9090" not in content
     assert "4318:4318" not in content
+
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_approval_denies_cross_session_before_reconstruction(
+    monkeypatch,
+    approved: bool,
+) -> None:
+    settings = _live_settings(OPSPILOT_TELEMETRY_MODE="reference")
+    hardening = _hardening(settings)
+    repository = InMemoryOpsPilotRepository()
+
+    app = create_app(
+        provider=FakeModelProvider(),
+        repository=repository,
+        settings=settings,
+        hardening=hardening,
+    )
+
+    owner = TestClient(app)
+    started = owner.post(
+        "/api/incidents/start",
+        json={"scenario_id": "checkout-db-pool-regression"},
+    ).json()
+
+    incident_id = started["incident_id"]
+    record = repository.get_incident(incident_id)
+
+    assert record is not None
+    assert record.session_id is not None
+
+    app.state.store.remove(incident_id)
+
+    acquired = hardening.lease_store.acquire(
+        session_id=record.session_id,
+        incident_id=incident_id,
+        ttl_seconds=hardening.lease_ttl_seconds,
+    )
+    assert acquired.acquired is True
+
+    reconstruction_calls = 0
+
+    def fail_if_reconstructed(**kwargs):
+        nonlocal reconstruction_calls
+        reconstruction_calls += 1
+        raise AssertionError(
+            "unauthorized request must not reconstruct approval state"
+        )
+
+    monkeypatch.setattr(
+        "backend.app.api.app._reconstruct_approval_session",
+        fail_if_reconstructed,
+    )
+
+    attacker = TestClient(app)
+    response = attacker.post(
+        f"/api/incidents/{incident_id}/approval",
+        json={"approved": approved},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "session_not_authorized"
+    assert reconstruction_calls == 0
+
+    lease = hardening.lease_store.inspect()
+    assert lease is not None
+    assert lease.session_id == record.session_id
+    assert lease.incident_id == incident_id
+
+
+def test_approval_denies_lost_lease_before_reconstruction(monkeypatch) -> None:
+    settings = _live_settings(OPSPILOT_TELEMETRY_MODE="reference")
+    hardening = _hardening(settings)
+    repository = InMemoryOpsPilotRepository()
+
+    app = create_app(
+        provider=FakeModelProvider(),
+        repository=repository,
+        settings=settings,
+        hardening=hardening,
+    )
+
+    owner = TestClient(app)
+    started = owner.post(
+        "/api/incidents/start",
+        json={"scenario_id": "checkout-db-pool-regression"},
+    ).json()
+
+    incident_id = started["incident_id"]
+    record = repository.get_incident(incident_id)
+
+    assert record is not None
+    assert record.session_id is not None
+
+    app.state.store.remove(incident_id)
+
+    assert hardening.lease_store.inspect() is None
+
+    reconstruction_calls = 0
+
+    def fail_if_reconstructed(**kwargs):
+        nonlocal reconstruction_calls
+        reconstruction_calls += 1
+        raise AssertionError(
+            "lost lease must stop approval before reconstruction"
+        )
+
+    monkeypatch.setattr(
+        "backend.app.api.app._reconstruct_approval_session",
+        fail_if_reconstructed,
+    )
+
+    response = owner.post(
+        f"/api/incidents/{incident_id}/approval",
+        json={"approved": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "sandbox_lease_lost"
+    assert reconstruction_calls == 0
