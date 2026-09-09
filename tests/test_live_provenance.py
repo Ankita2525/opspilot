@@ -214,6 +214,92 @@ def test_recovery_provenance_accepts_workload_and_prometheus_after_remediation()
     assert recovery.all_samples_post_remediation is True
 
 
+
+def test_resume_freshness_cannot_predate_public_execution_timestamp() -> None:
+    repository = InMemoryOpsPilotRepository()
+    store = ProvenanceStore(repository)
+
+    started_at = datetime(2026, 9, 9, 20, 0, 0, tzinfo=UTC)
+    remediation_at = datetime(2026, 9, 9, 20, 1, 0, tzinfo=UTC)
+    source_at = remediation_at + timedelta(seconds=5)
+    executed_at = remediation_at + timedelta(seconds=10)
+
+    existing = with_manifest_hash(
+        build_live_provenance(
+            incident_id="inc-execution-boundary",
+            environment="Ephemeral Incident Lab",
+            service="auth-service",
+            service_revision="v1",
+            started_at=started_at,
+            baseline_samples=[_sample(started_at, 80, True)],
+            baseline_summary={
+                "request_count": 1,
+                "p95_latency_ms": 80,
+                "error_rate_percent": 0.0,
+            },
+            degraded_samples=[_sample(started_at, 500, False)],
+            degraded_summary={
+                "request_count": 1,
+                "p95_latency_ms": 500,
+                "error_rate_percent": 100.0,
+            },
+            diagnosis_provider="groq",
+            diagnosis_model="test-model",
+            evidence_count=2,
+            remediation_action="rollback_deployment",
+            approval_required=True,
+        )
+    )
+    store._persist(existing)
+
+    resumed = IncidentResponseResumeResult(
+        status="resolved",
+        execution_success=True,
+        recovered_p95_latency_ms=100,
+        recovered_error_rate_percent=0.0,
+        approval_status="approved",
+    )
+
+    recovery_result = {
+        "status": "resolved",
+        "summary": {
+            "request_count": 2,
+            "p95_latency_ms": 100,
+            "error_rate_percent": 0.0,
+            "newest_sample_at": source_at.isoformat(),
+        },
+        "observations": [
+            {
+                "workload": {
+                    "newest_sample_at": source_at.isoformat(),
+                }
+            }
+        ],
+        "prometheus": {
+            "observed_at": source_at.isoformat(),
+        },
+    }
+
+    updated = store.save_after_resume(
+        incident_id="inc-execution-boundary",
+        resumed=resumed,
+        recovery_result=recovery_result,
+        remediation_at=remediation_at,
+        approved_at=remediation_at - timedelta(seconds=1),
+        executed_at=executed_at,
+    )
+
+    assert updated is not None
+    assert updated.remediation is not None
+    assert updated.remediation.executed_at == executed_at
+    assert updated.recovery is not None
+    assert updated.recovery.latest_metric_timestamp == source_at
+
+    # Telemetry is newer than the verifier boundary but older than the
+    # publicly persisted execution timestamp, so freshness must fail closed.
+    assert updated.recovery.all_samples_post_remediation is False
+
+
 def test_resume_fallback_never_invents_post_remediation_freshness() -> None:
     repository = InMemoryOpsPilotRepository()
     store = ProvenanceStore(repository)

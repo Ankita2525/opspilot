@@ -176,8 +176,14 @@ class IncidentLifecyclePersistence:
         incident_id: str,
         proposal_id: str,
         resumed: IncidentResponseResumeResult,
+        approval_at: datetime | None = None,
+        remediation_at: datetime | None = None,
+        verification_at: datetime | None = None,
     ) -> bool:
-        timestamp = self._now()
+        verification_timestamp = verification_at or self._now()
+        approval_timestamp = approval_at or verification_timestamp
+        remediation_timestamp = remediation_at or verification_timestamp
+
         approval_status = resumed.approval_status or (
             "approved" if resumed.status == "resolved" else "rejected"
         )
@@ -186,7 +192,7 @@ class IncidentLifecyclePersistence:
         finalized = self._repository.finalize_incident_after_approval(
             incident_id,
             status=resumed.status,
-            updated_at=timestamp,
+            updated_at=verification_timestamp,
             resolved=resolved,
         )
         if not finalized:
@@ -196,7 +202,7 @@ class IncidentLifecyclePersistence:
                 incident_id=incident_id,
                 event_type="approval_approved",
                 message="Remediation approved.",
-                timestamp=timestamp,
+                timestamp=approval_timestamp,
                 metadata={"proposal_id": proposal_id},
             )
         else:
@@ -204,7 +210,7 @@ class IncidentLifecyclePersistence:
                 incident_id=incident_id,
                 event_type="approval_rejected",
                 message="Remediation rejected.",
-                timestamp=timestamp,
+                timestamp=approval_timestamp,
                 metadata={"proposal_id": proposal_id, "resolved": False},
             )
             return True
@@ -213,7 +219,7 @@ class IncidentLifecyclePersistence:
                 incident_id=incident_id,
                 event_type="remediation_executed",
                 message="Remediation executed.",
-                timestamp=timestamp,
+                timestamp=remediation_timestamp,
                 metadata={
                     "proposal_id": proposal_id,
                     "execution_success": True,
@@ -223,7 +229,7 @@ class IncidentLifecyclePersistence:
             incident_id=incident_id,
             event_type="verification_completed",
             message="Recovery verification completed.",
-            timestamp=timestamp,
+            timestamp=verification_timestamp,
             metadata={
                 "resolved": resolved,
                 "recovered_p95_latency_ms": resumed.recovered_p95_latency_ms,

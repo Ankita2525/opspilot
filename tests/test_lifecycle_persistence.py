@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from backend.app.agent.incident_response import IncidentResponseResumeResult
 from backend.app.api.app import create_app
+from backend.app.persistence.lifecycle import IncidentLifecyclePersistence
 from backend.app.persistence.memory import InMemoryOpsPilotRepository
 from backend.app.persistence.models import ApprovalRecord, IncidentRecord
 from backend.app.persistence.repository import OpsPilotRepository
@@ -258,6 +260,92 @@ def test_lifecycle_audit_events_are_deterministic() -> None:
         "approval_requested",
         "approval_rejected",
     ]
+
+
+
+def test_resume_audit_preserves_actual_event_timestamps() -> None:
+    client, repo = _client()
+    started = _start(client).json()
+    incident_id = started["incident_id"]
+    proposal_id = started["approval_request"]["proposal_id"]
+
+    approval_at = datetime(2026, 9, 9, 22, 48, 30, tzinfo=timezone.utc)
+    remediation_at = approval_at + timedelta(seconds=2)
+    verification_at = remediation_at + timedelta(seconds=30)
+
+    assert repo.claim_incident_for_approval(
+        incident_id,
+        claimed_at=approval_at,
+        processing_expires_at=verification_at + timedelta(seconds=60),
+    )
+
+    persistence = IncidentLifecyclePersistence(
+        repo,
+        now=lambda: verification_at,
+    )
+    resumed = IncidentResponseResumeResult(
+        status="resolved",
+        execution_success=True,
+        recovered_p95_latency_ms=270,
+        recovered_error_rate_percent=0.0,
+        approval_status="approved",
+    )
+
+    assert persistence.record_resume_result(
+        incident_id=incident_id,
+        proposal_id=proposal_id,
+        resumed=resumed,
+        approval_at=approval_at,
+        remediation_at=remediation_at,
+        verification_at=verification_at,
+    )
+
+    events = {
+        event.event_type: event
+        for event in repo.list_audit_events(incident_id)
+    }
+
+    assert events["approval_approved"].timestamp == approval_at
+    assert events["remediation_executed"].timestamp == remediation_at
+    assert events["verification_completed"].timestamp == verification_at
+
+    assert (
+        events["approval_approved"].timestamp
+        < events["remediation_executed"].timestamp
+        < events["verification_completed"].timestamp
+    )
+
+    record = repo.get_incident(incident_id)
+    assert record is not None
+    assert record.updated_at == verification_at
+
+
+
+def test_approval_path_uses_injected_clock_for_public_event_times() -> None:
+    fixed = datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    client, repo = _client(now=lambda: fixed)
+
+    started = _start(client).json()
+    incident_id = started["incident_id"]
+
+    response = client.post(
+        f"/api/incidents/{incident_id}/approval",
+        json={"approved": True},
+    )
+    assert response.status_code == 200
+
+    events = {
+        event.event_type: event
+        for event in repo.list_audit_events(incident_id)
+    }
+
+    assert events["approval_approved"].timestamp == fixed
+    assert events["remediation_executed"].timestamp == fixed
+    assert events["verification_completed"].timestamp == fixed
+
+    record = repo.get_incident(incident_id)
+    assert record is not None
+    assert record.updated_at == fixed
 
 
 def test_persisted_records_do_not_contain_simulator_ground_truth() -> None:

@@ -111,9 +111,21 @@ class ProvenanceStore:
         if recovery_result is not None:
             from backend.app.provenance.builder import recovery_from_verification
 
+            recovery_boundary = remediation_at
+            public_executed_at = (
+                remediation.executed_at
+                if remediation is not None
+                else executed_at
+            )
+            if public_executed_at is not None and (
+                recovery_boundary is None
+                or public_executed_at > recovery_boundary
+            ):
+                recovery_boundary = public_executed_at
+
             recovery = recovery_from_verification(
                 recovery_result,
-                remediation_at=remediation_at,
+                remediation_at=recovery_boundary,
             )
         elif resumed.recovered_p95_latency_ms is not None:
             from backend.app.provenance.models import RecoveryProvenance
