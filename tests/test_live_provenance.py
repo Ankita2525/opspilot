@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 
+from backend.app.agent.incident_response import IncidentResponseResumeResult
 from backend.app.api.app import create_app
 from backend.app.persistence.memory import InMemoryOpsPilotRepository
-from backend.app.provenance.builder import build_live_provenance, window_from_samples
+from backend.app.provenance.builder import (
+    build_live_provenance,
+    recovery_from_verification,
+    window_from_samples,
+)
+from backend.app.provenance.store import ProvenanceStore
 from backend.app.provenance.manifest import (
     canonical_manifest_bytes,
     evidence_manifest_hash,
@@ -115,3 +121,148 @@ def test_live_provenance_fields_when_persisted() -> None:
     payload = provenance.model_dump_json().lower()
     for token in FORBIDDEN:
         assert token not in payload
+
+
+
+def test_recovery_provenance_requires_actual_post_remediation_observations() -> None:
+    remediation_at = datetime(2026, 9, 9, 20, 0, 0, tzinfo=UTC)
+    source_at = remediation_at.replace(second=10)
+
+    recovery = recovery_from_verification(
+        {
+            "status": "resolved",
+            "summary": {
+                "request_count": 2,
+                "p95_latency_ms": 100,
+                "error_rate_percent": 0.0,
+                "newest_sample_at": source_at.isoformat(),
+            },
+            "observations": [],
+            "prometheus": {
+                "observed_at": source_at.isoformat(),
+            },
+        },
+        remediation_at=remediation_at,
+    )
+
+    assert recovery is not None
+    assert recovery.all_samples_post_remediation is False
+
+
+def test_recovery_provenance_rejects_stale_prometheus_source_timestamp() -> None:
+    remediation_at = datetime(2026, 9, 9, 20, 0, 0, tzinfo=UTC)
+    workload_at = remediation_at.replace(second=10)
+    stale_metric_at = remediation_at.replace(second=0) - timedelta(seconds=5)
+
+    recovery = recovery_from_verification(
+        {
+            "status": "resolved",
+            "summary": {
+                "request_count": 2,
+                "p95_latency_ms": 100,
+                "error_rate_percent": 0.0,
+                "newest_sample_at": workload_at.isoformat(),
+            },
+            "observations": [
+                {
+                    "workload": {
+                        "newest_sample_at": workload_at.isoformat(),
+                    }
+                }
+            ],
+            "prometheus": {
+                "observed_at": stale_metric_at.isoformat(),
+            },
+        },
+        remediation_at=remediation_at,
+    )
+
+    assert recovery is not None
+    assert recovery.latest_metric_timestamp == stale_metric_at
+    assert recovery.all_samples_post_remediation is False
+
+
+def test_recovery_provenance_accepts_workload_and_prometheus_after_remediation() -> None:
+    remediation_at = datetime(2026, 9, 9, 20, 0, 0, tzinfo=UTC)
+    workload_at = remediation_at.replace(second=10)
+    metric_at = remediation_at.replace(second=8)
+
+    recovery = recovery_from_verification(
+        {
+            "status": "resolved",
+            "summary": {
+                "request_count": 2,
+                "p95_latency_ms": 100,
+                "error_rate_percent": 0.0,
+                "newest_sample_at": workload_at.isoformat(),
+            },
+            "observations": [
+                {
+                    "workload": {
+                        "newest_sample_at": workload_at.isoformat(),
+                    }
+                }
+            ],
+            "prometheus": {
+                "observed_at": metric_at.isoformat(),
+            },
+        },
+        remediation_at=remediation_at,
+    )
+
+    assert recovery is not None
+    assert recovery.all_samples_post_remediation is True
+
+
+def test_resume_fallback_never_invents_post_remediation_freshness() -> None:
+    repository = InMemoryOpsPilotRepository()
+    store = ProvenanceStore(repository)
+
+    started_at = datetime(2026, 9, 9, 19, 59, 0, tzinfo=UTC)
+    remediation_at = datetime(2026, 9, 9, 20, 0, 0, tzinfo=UTC)
+
+    existing = with_manifest_hash(
+        build_live_provenance(
+            incident_id="inc-fallback-freshness",
+            environment="Ephemeral Incident Lab",
+            service="auth-service",
+            service_revision="v1",
+            started_at=started_at,
+            baseline_samples=[_sample(started_at, 80, True)],
+            baseline_summary={
+                "request_count": 1,
+                "p95_latency_ms": 80,
+                "error_rate_percent": 0.0,
+            },
+            degraded_samples=[_sample(started_at, 500, False)],
+            degraded_summary={
+                "request_count": 1,
+                "p95_latency_ms": 500,
+                "error_rate_percent": 100.0,
+            },
+            diagnosis_provider="groq",
+            diagnosis_model="test-model",
+            evidence_count=2,
+            remediation_action="rollback_deployment",
+            approval_required=True,
+        )
+    )
+    store._persist(existing)
+
+    resumed = IncidentResponseResumeResult(
+        status="resolved",
+        execution_success=True,
+        recovered_p95_latency_ms=100,
+        recovered_error_rate_percent=0.0,
+        approval_status="approved",
+    )
+
+    updated = store.save_after_resume(
+        incident_id="inc-fallback-freshness",
+        resumed=resumed,
+        remediation_at=remediation_at,
+    )
+
+    assert updated is not None
+    assert updated.recovery is not None
+    assert updated.recovery.all_samples_post_remediation is not True

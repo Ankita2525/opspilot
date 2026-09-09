@@ -777,7 +777,6 @@ export default function Home() {
                 approval={approval}
                 freshTelemetryVerified={
                   activeProvenance?.recovery?.all_samples_post_remediation ??
-                  activeProvenance?.recovery?.verified ??
                   null
                 }
               />

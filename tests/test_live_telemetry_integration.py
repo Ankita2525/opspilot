@@ -99,6 +99,11 @@ def test_verification_requires_fresh_prometheus_timestamp(monkeypatch) -> None:
         "query_error_rate_percent_with_timestamp",
         lambda service, window="2m": (0.0, old_observation[1]),
     )
+    monkeypatch.setattr(
+        prometheus,
+        "query_latest_source_sample_timestamp",
+        lambda service: old_observation[1],
+    )
 
     verifier = RecoveryVerifier(max_wait_seconds=1.0, required_consecutive=1)
     workload = MagicMock()
@@ -154,6 +159,11 @@ def test_auth_recovery_accepts_healthy_service_threshold(
         prometheus,
         "query_error_rate_percent_with_timestamp",
         lambda service, window="2m": (0.0, observed_at),
+    )
+    monkeypatch.setattr(
+        prometheus,
+        "query_latest_source_sample_timestamp",
+        lambda service: observed_at,
     )
 
     workload = MagicMock()

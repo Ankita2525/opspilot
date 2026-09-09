@@ -123,7 +123,7 @@ class ProvenanceStore:
                 p95_latency_ms=resumed.recovered_p95_latency_ms,
                 error_rate=resumed.recovered_error_rate_percent,
                 verified=resumed.status == "resolved",
-                all_samples_post_remediation=True if remediation_at else None,
+                all_samples_post_remediation=None,
             )
         updated = existing.model_copy(
             update={

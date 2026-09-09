@@ -110,6 +110,29 @@ class PrometheusClient:
             f'sum(rate(http_requests_total{{service="{service}"}}[{window}]))'
         )
 
+    def query_latest_source_sample_timestamp(
+        self,
+        service: str,
+    ) -> datetime | None:
+        """Return the newest raw Prometheus scrape timestamp for the service.
+
+        The timestamp attached to an instant-query result is the PromQL
+        evaluation time. `timestamp(...)` exposes the timestamp of the
+        underlying raw metric sample instead, which is the provenance boundary
+        required for post-remediation freshness checks.
+        """
+        observation = self._query_instant(
+            f'max(timestamp(http_requests_total{{service="{service}"}}))'
+        )
+        if observation is None:
+            return None
+
+        source_timestamp_seconds, _evaluated_at = observation
+        try:
+            return datetime.fromtimestamp(source_timestamp_seconds, tz=UTC)
+        except (OSError, OverflowError, TypeError, ValueError):
+            return None
+
     def is_ready(self) -> bool:
         with httpx.Client(timeout=self._config.timeout_seconds) as client:
             response = client.get(f"{self._config.base_url.rstrip('/')}/-/ready")
