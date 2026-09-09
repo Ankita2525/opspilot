@@ -7,6 +7,10 @@ driven by forever-retrying terminal incidents.
 
 from __future__ import annotations
 
+APPROVAL_PROCESSING_INCIDENT_STATUS = "approval_processing"
+TIMEOUT_PROCESSING_INCIDENT_STATUS = "timeout_processing"
+
+
 # Terminal outcomes that must never re-enter expiry cleanup.
 TERMINAL_INCIDENT_STATUSES: frozenset[str] = frozenset(
     {

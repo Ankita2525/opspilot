@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from typing import TYPE_CHECKING
 
@@ -98,6 +98,15 @@ class IncidentCleanupWorker:
             self._lease_store.expire_stale()
         now = datetime.now(UTC)
         for incident_id, session_id in self._list_expired(now):
+            claimed_at = datetime.now(UTC)
+            claimed = self._repository.claim_incident_for_timeout(
+                incident_id,
+                claimed_at=claimed_at,
+                processing_expires_at=claimed_at
+                + timedelta(seconds=self._lease_ttl_seconds),
+            )
+            if not claimed:
+                continue
             if self._cleanup_incident(incident_id, session_id):
                 cleaned += 1
         return cleaned

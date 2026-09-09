@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from backend.app.persistence.models import (
@@ -16,6 +17,33 @@ class OpsPilotRepository(Protocol):
     def save_incident(self, record: IncidentRecord) -> None: ...
 
     def get_incident(self, incident_id: str) -> IncidentRecord | None: ...
+
+
+    def claim_incident_for_approval(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool: ...
+
+    def claim_incident_for_timeout(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool: ...
+
+    def finalize_incident_after_approval(
+        self,
+        incident_id: str,
+        *,
+        status: str,
+        updated_at: datetime,
+        resolved: bool,
+    ) -> bool: ...
+
 
     def list_incidents(self) -> list[IncidentRecord]: ...
 

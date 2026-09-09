@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -170,6 +170,16 @@ def create_app(
 
         now = datetime.now(UTC)
         for incident_id, session_id in list_expired_incidents(resolved_repository, now):
+            claimed_at = datetime.now(UTC)
+            claimed = resolved_repository.claim_incident_for_timeout(
+                incident_id,
+                claimed_at=claimed_at,
+                processing_expires_at=claimed_at
+                + timedelta(seconds=resolved_hardening.lease_ttl_seconds),
+            )
+            if not claimed:
+                continue
+
             record = resolved_repository.get_incident(incident_id)
             scenario_id = record.scenario_id if record is not None else None
             if scenario_id:
@@ -701,6 +711,10 @@ def create_app(
             requester_session_id=demo_session.session_id,
             enforce=resolved_hardening.enforce_live_guards,
         )
+
+        # Never trust a stale in-memory IncidentSession over durable state.
+        _require_resumable_incident(record)
+
         lease_renewed = renew_global_lease(
             hardening=resolved_hardening,
             session_id=demo_session.session_id,
@@ -723,6 +737,23 @@ def create_app(
                 live_reconciler=live_reconciler,
                 provenance_store=provenance_store,
             )
+
+        claimed_at = datetime.now(UTC)
+        approval_claimed = resolved_repository.claim_incident_for_approval(
+            incident_id,
+            claimed_at=claimed_at,
+            processing_expires_at=claimed_at
+            + timedelta(seconds=resolved_hardening.lease_ttl_seconds),
+        )
+        if not approval_claimed:
+            current = _require_incident_record(resolved_repository, incident_id)
+            if current.status != RESUMABLE_INCIDENT_STATUS or current.resolved:
+                _require_resumable_incident(current)
+            raise HTTPException(
+                status_code=409,
+                detail="Incident approval window expired.",
+            )
+
         try:
             resumed = session.coordinator.resume(
                 remediation_thread_id=session.remediation_thread_id,
@@ -731,11 +762,21 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         approval_count.add(1, {"action": "approved" if body.approved else "rejected"})
-        persistence.record_resume_result(
+        finalized = persistence.record_resume_result(
             incident_id=incident_id,
             proposal_id=session.proposal_id,
             resumed=resumed,
         )
+        if not finalized:
+            current = _require_incident_record(resolved_repository, incident_id)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Incident state changed during remediation: "
+                    f"{current.status}"
+                ),
+            )
+
         if session.live_session is not None:
             provenance_store.save_after_resume(
                 incident_id=incident_id,
