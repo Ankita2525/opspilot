@@ -19,7 +19,7 @@ from backend.app.telemetry.live import LiveTelemetryBackend
 from backend.app.telemetry.verification import (
     RecoveryVerifier,
     filter_samples_after,
-    meets_baseline_recovery,
+    meets_service_recovery,
     summarize_samples,
 )
 from sandbox.payments.app import app as payments_app, revision_state as payments_revision_state
@@ -117,11 +117,81 @@ def test_verification_requires_fresh_prometheus_timestamp(monkeypatch) -> None:
     workload.collect_baseline.assert_not_called()
 
 
-def test_meets_baseline_recovery_uses_relative_thresholds() -> None:
-    assert meets_baseline_recovery(
-        {"request_count": 10, "p95_latency_ms": 180, "error_rate_percent": 0.5},
-        {"p95_latency_ms": 90, "error_rate_percent": 0.0},
+def test_meets_service_recovery_uses_canonical_thresholds() -> None:
+    assert meets_service_recovery(
+        "auth-service",
+        {"request_count": 10, "p95_latency_ms": 200, "error_rate_percent": 0.5},
     )
+    assert not meets_service_recovery(
+        "auth-service",
+        {"request_count": 10, "p95_latency_ms": 351, "error_rate_percent": 0.0},
+    )
+    assert not meets_service_recovery(
+        "auth-service",
+        {"request_count": 10, "p95_latency_ms": 200, "error_rate_percent": 1.1},
+    )
+    assert not meets_service_recovery(
+        "auth-service",
+        {"request_count": 0, "p95_latency_ms": 100, "error_rate_percent": 0.0},
+    )
+
+
+def test_auth_recovery_accepts_healthy_service_threshold(
+    monkeypatch,
+) -> None:
+    remediation_at = datetime.now(UTC)
+    observed_at = remediation_at + timedelta(seconds=10)
+
+    prometheus = PrometheusClient(
+        PrometheusConfig(base_url="http://prometheus.test")
+    )
+    monkeypatch.setattr(
+        prometheus,
+        "query_p95_latency_ms_with_timestamp",
+        lambda service, window="2m": (200, observed_at),
+    )
+    monkeypatch.setattr(
+        prometheus,
+        "query_error_rate_percent_with_timestamp",
+        lambda service, window="2m": (0.0, observed_at),
+    )
+
+    workload = MagicMock()
+    workload.collect_baseline.return_value = [
+        WorkloadSample(
+            remediation_at + timedelta(seconds=1),
+            200,
+            True,
+            200,
+        )
+    ]
+
+    mapping = MagicMock()
+    mapping.affected_service = "auth-service"
+
+    verifier = RecoveryVerifier(
+        scrape_interval_seconds=0.01,
+        max_wait_seconds=0.2,
+        required_consecutive=1,
+    )
+
+    result = verifier.verify(
+        prometheus=prometheus,
+        workload=workload,
+        mapping=mapping,
+        incident_id="inc-auth-recovery",
+        baseline_summary={
+            "p95_latency_ms": 80,
+            "error_rate_percent": 0.0,
+        },
+        remediation_at=remediation_at,
+        sample_duration_seconds=0.01,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["recovered"] is True
+    assert result["recovered_p95_latency_ms"] == 200
+    assert result["recovered_error_rate_percent"] == 0.0
 
 
 def test_live_backend_never_imports_simulator_environment() -> None:
