@@ -91,3 +91,19 @@ export function selectRenderableProvenance<T extends ProvenanceIdentity>(
   }
   return provenance;
 }
+
+
+export type RecoveryFreshnessLabel = "VERIFIED" | "PENDING";
+
+/**
+ * Fresh telemetry is verified only when provenance explicitly proves that
+ * recovery evidence was collected after remediation.
+ *
+ * Recovered metric values or a generic resolved/verified status are not
+ * substitutes for post-remediation provenance.
+ */
+export function recoveryFreshnessLabel(
+  allSamplesPostRemediation?: boolean | null,
+): RecoveryFreshnessLabel {
+  return allSamplesPostRemediation === true ? "VERIFIED" : "PENDING";
+}

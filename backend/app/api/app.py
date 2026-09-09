@@ -781,6 +781,7 @@ def create_app(
             provenance_store.save_after_resume(
                 incident_id=incident_id,
                 resumed=resumed,
+                recovery_result=session.live_session.recovery_result,
                 remediation_at=session.live_session.remediation_at,
                 approved_at=datetime.now(UTC) if body.approved else None,
                 executed_at=datetime.now(UTC) if resumed.execution_success else None,

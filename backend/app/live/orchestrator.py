@@ -48,6 +48,7 @@ class LiveIncidentSession:
     blocked: bool = False
     blocked_reason: str | None = None
     remediation_at: datetime | None = None
+    recovery_result: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -218,6 +219,7 @@ class LiveIncidentOrchestrator:
             remediation_at=remediation_at,
             sample_duration_seconds=observation_seconds or self._observation_seconds,
         )
+        session.recovery_result = result
         session.telemetry_source_states = session.telemetry.refresh_pipeline_health()
         for observation in result.get("observations", []):
             self._emit(

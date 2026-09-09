@@ -5,6 +5,7 @@ import {
   humanApprovalLabel,
   incidentRevisionMetaLabel,
   provenanceMatchesIncident,
+  recoveryFreshnessLabel,
   selectRenderableProvenance,
 } from "./provenance-display.ts";
 
@@ -157,5 +158,15 @@ describe("cross-incident provenance invariants", () => {
     );
     assert.equal(selectRenderableProvenance(null, "inc_payments"), null);
     assert.equal(selectRenderableProvenance(null, null), null);
+  });
+});
+
+
+describe("recoveryFreshnessLabel", () => {
+  it("requires explicit post-remediation provenance proof", () => {
+    assert.equal(recoveryFreshnessLabel(true), "VERIFIED");
+    assert.equal(recoveryFreshnessLabel(false), "PENDING");
+    assert.equal(recoveryFreshnessLabel(null), "PENDING");
+    assert.equal(recoveryFreshnessLabel(undefined), "PENDING");
   });
 });

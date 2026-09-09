@@ -36,10 +36,14 @@ def check_metrics_pipeline(
         observation = prometheus.query_request_rate_with_timestamp(service)
         if observation is None:
             raise RuntimeError("No Prometheus samples for service")
-        _, observed_at = observation
-        age = (datetime.now(UTC) - observed_at).total_seconds()
+
+        source_observed_at = prometheus.query_latest_source_sample_timestamp(service)
+        if source_observed_at is None:
+            raise RuntimeError("No Prometheus source sample timestamp for service")
+
+        age = (datetime.now(UTC) - source_observed_at).total_seconds()
         if age > max_age_seconds:
-            raise RuntimeError("Prometheus samples are stale")
+            raise RuntimeError("Prometheus source samples are stale")
         return True
 
     try:

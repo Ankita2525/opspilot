@@ -176,17 +176,25 @@ class RecoveryVerifier:
         )
 
         def _fetch() -> FreshObservation:
+            source_observed_at = (
+                prometheus.query_latest_source_sample_timestamp(service)
+            )
+            if source_observed_at is None:
+                raise RuntimeError("Prometheus returned no source sample timestamp")
+            if source_observed_at <= minimum_observation_time:
+                raise RuntimeError(
+                    "Prometheus source sample is older than remediation"
+                )
+
             p95_obs = prometheus.query_p95_latency_ms_with_timestamp(service)
             error_obs = prometheus.query_error_rate_percent_with_timestamp(service)
             if p95_obs is None or error_obs is None:
                 raise RuntimeError("Prometheus returned no fresh samples")
-            p95_value, p95_at = p95_obs
-            error_value, error_at = error_obs
-            observed_at = max(p95_at, error_at)
-            if observed_at <= minimum_observation_time:
-                raise RuntimeError("Prometheus samples are older than remediation")
+
+            p95_value, _p95_evaluated_at = p95_obs
+            error_value, _error_evaluated_at = error_obs
             return FreshObservation(
-                observed_at=observed_at,
+                observed_at=source_observed_at,
                 p95_latency_ms=p95_value,
                 error_rate_percent=error_value,
                 source="prometheus",

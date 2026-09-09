@@ -123,19 +123,27 @@ class LiveTelemetryBackend:
             raise RuntimeError("Metrics pipeline is not producing fresh observations")
 
         def _fetch() -> MetricResponse:
+            source_observed_at = (
+                self._prometheus.query_latest_source_sample_timestamp(service)
+            )
             p95_obs = self._prometheus.query_p95_latency_ms_with_timestamp(service)
             error_obs = self._prometheus.query_error_rate_percent_with_timestamp(service)
-            if p95_obs is None or error_obs is None:
+            if (
+                source_observed_at is None
+                or p95_obs is None
+                or error_obs is None
+            ):
                 raise RuntimeError("Metrics query returned no data")
-            p95, observed_at = p95_obs
-            error_rate, _ = error_obs
+
+            p95, _p95_evaluated_at = p95_obs
+            error_rate, _error_evaluated_at = error_obs
             return MetricResponse(
                 service=service,
                 p95_latency_ms=p95,
                 error_rate_percent=error_rate,
-                timestamp=observed_at,
+                timestamp=source_observed_at,
                 telemetry_status=TelemetrySourceStatus.HEALTHY,
-                observed_at=observed_at,
+                observed_at=source_observed_at,
             )
 
         try:

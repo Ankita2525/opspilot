@@ -1,5 +1,6 @@
 import { formatErrorRate, formatLatency } from "@/lib/labels";
 import { approvalTerminalKind } from "@/lib/approval-outcome";
+import { recoveryFreshnessLabel } from "@/lib/provenance-display";
 import type { IncidentApprovalResponse, Metrics } from "@/lib/types";
 
 type RecoveryPanelProps = {
@@ -63,8 +64,7 @@ export function RecoveryPanel({
           </div>
         </div>
         <p className="recovery-fresh type-mono">
-          Fresh telemetry{" "}
-          {freshTelemetryVerified || hasAfter ? "VERIFIED" : "PENDING"}
+          Fresh telemetry {recoveryFreshnessLabel(freshTelemetryVerified)}
         </p>
       </section>
     );

@@ -61,27 +61,30 @@ def recovery_from_verification(
     if not count:
         return None
     observations = result.get("observations") or []
-    all_post = True
-    if remediation_at is not None and observations:
+    prometheus = result.get("prometheus") or {}
+    latest_metric = parse_iso(prometheus.get("observed_at"))
+
+    all_post = False
+    if (
+        remediation_at is not None
+        and observations
+        and latest_metric is not None
+        and latest_metric > remediation_at
+    ):
+        all_post = True
         for observation in observations:
             workload = observation.get("workload") or {}
-            newest = workload.get("newest_sample_at")
-            if newest is None:
+            newest_at = parse_iso(workload.get("newest_sample_at"))
+            if newest_at is None or newest_at <= remediation_at:
                 all_post = False
                 break
-            newest_at = datetime.fromisoformat(str(newest).replace("Z", "+00:00"))
-            if newest_at <= remediation_at:
-                all_post = False
-                break
-    prometheus = result.get("prometheus") or {}
-    latest_metric = prometheus.get("observed_at")
     return RecoveryProvenance(
         sample_count=int(count),
         window_start=None,
         window_end=parse_iso(summary.get("newest_sample_at")),
         p95_latency_ms=summary.get("p95_latency_ms"),
         error_rate=summary.get("error_rate_percent"),
-        latest_metric_timestamp=parse_iso(latest_metric),
+        latest_metric_timestamp=latest_metric,
         latest_log_timestamp=None,
         all_samples_post_remediation=all_post if remediation_at else None,
         verified=result.get("status") == "resolved",
