@@ -105,13 +105,14 @@ def create_app(
     resolved_repository = runtime.repository
     resolved_checkpointer = runtime.checkpointer
     resolved_settings = runtime.settings
+    resolved_now = now or (lambda: datetime.now(UTC))
     cors_origins = list(
         resolved_settings.cors_origins
         if resolved_settings is not None
         else DEFAULT_CORS_ORIGINS
     )
-    persistence = IncidentLifecyclePersistence(resolved_repository, now=now)
-    provenance_store = ProvenanceStore(resolved_repository, resolved_settings, now=now)
+    persistence = IncidentLifecyclePersistence(resolved_repository, now=resolved_now)
+    provenance_store = ProvenanceStore(resolved_repository, resolved_settings, now=resolved_now)
     store = IncidentSessionStore()
     live_orchestrator = LiveIncidentOrchestrator()
     live_reconciler = LiveSessionReconciler(orchestrator=live_orchestrator)
@@ -166,11 +167,9 @@ def create_app(
 
     def _reconcile_stale_incidents_on_startup() -> None:
         """Persistent-state backstop: terminalize stale in_progress + clear faults."""
-        from datetime import UTC, datetime
-
-        now = datetime.now(UTC)
-        for incident_id, session_id in list_expired_incidents(resolved_repository, now):
-            claimed_at = datetime.now(UTC)
+        as_of = resolved_now()
+        for incident_id, session_id in list_expired_incidents(resolved_repository, as_of):
+            claimed_at = resolved_now()
             claimed = resolved_repository.claim_incident_for_timeout(
                 incident_id,
                 claimed_at=claimed_at,
@@ -282,7 +281,7 @@ def create_app(
         session_id: str | None = None,
         incident_id: str | None = None,
     ):
-        approvals = ApprovalService(repository=resolved_repository, now=now)
+        approvals = ApprovalService(repository=resolved_repository, now=resolved_now)
         if _telemetry_mode() is TelemetryMode.LIVE:
             if live_session is None:
                 raise ValueError("Live telemetry mode requires a prepared live session.")
@@ -331,7 +330,7 @@ def create_app(
         if live_session is not None:
 
             def verify_fn(state: RemediationState) -> dict:
-                live_session.remediation_at = datetime.now(UTC)
+                live_session.remediation_at = resolved_now()
                 return live_orchestrator.verify_recovery(live_session, events=events)
 
         environment, coordinator = _runtime_for_scenario(
@@ -650,7 +649,7 @@ def create_app(
             scenario=scenario,
             incident_id=incident_id,
             begin_incident=begin,
-            now=now,
+            now=resolved_now,
             on_failure=on_failure,
         )
 
@@ -736,9 +735,10 @@ def create_app(
                 telemetry_mode=_telemetry_mode(),
                 live_reconciler=live_reconciler,
                 provenance_store=provenance_store,
+                now=resolved_now,
             )
 
-        claimed_at = datetime.now(UTC)
+        claimed_at = resolved_now()
         approval_claimed = resolved_repository.claim_incident_for_approval(
             incident_id,
             claimed_at=claimed_at,
@@ -761,11 +761,22 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        verification_at = resolved_now()
+        remediation_at = (
+            session.live_session.remediation_at
+            if session.live_session is not None
+            else None
+        )
+
         approval_count.add(1, {"action": "approved" if body.approved else "rejected"})
         finalized = persistence.record_resume_result(
             incident_id=incident_id,
             proposal_id=session.proposal_id,
             resumed=resumed,
+            approval_at=claimed_at,
+            remediation_at=remediation_at if resumed.execution_success else None,
+            verification_at=verification_at,
         )
         if not finalized:
             current = _require_incident_record(resolved_repository, incident_id)
@@ -782,9 +793,9 @@ def create_app(
                 incident_id=incident_id,
                 resumed=resumed,
                 recovery_result=session.live_session.recovery_result,
-                remediation_at=session.live_session.remediation_at,
-                approved_at=datetime.now(UTC) if body.approved else None,
-                executed_at=datetime.now(UTC) if resumed.execution_success else None,
+                remediation_at=remediation_at,
+                approved_at=claimed_at if body.approved else None,
+                executed_at=remediation_at if resumed.execution_success else None,
             )
         if session.live_session is not None and resumed.status in {
             "resolved",
@@ -960,7 +971,9 @@ def _reconstruct_approval_session(
     telemetry_mode: TelemetryMode = TelemetryMode.REFERENCE,
     live_reconciler: LiveSessionReconciler | None = None,
     provenance_store: ProvenanceStore | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> IncidentSession:
+    resolved_now = now or (lambda: datetime.now(UTC))
     with get_tracer().start_as_current_span("opspilot.checkpoint.resume") as span:
         span.set_attribute("opspilot.incident_id", incident_id)
         record = repository.get_incident(incident_id)
@@ -995,7 +1008,7 @@ def _reconstruct_approval_session(
 
             def verify_fn(state: RemediationState) -> dict:
                 assert live_session is not None
-                live_session.remediation_at = datetime.now(UTC)
+                live_session.remediation_at = resolved_now()
                 return LiveIncidentOrchestrator().verify_recovery(live_session)
 
         if live_session is not None:
