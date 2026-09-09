@@ -78,6 +78,145 @@ class InMemoryOpsPilotRepository:
             return None
         return _copy(stored)
 
+    def claim_incident_for_approval(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool:
+        from datetime import timezone
+
+        from backend.app.persistence.incident_status import (
+            APPROVAL_PROCESSING_INCIDENT_STATUS,
+        )
+
+        record = self._incidents.get(incident_id)
+        if record is None:
+            return False
+        if record.status != "approval_required" or record.resolved:
+            return False
+
+        claimed_at_utc = (
+            claimed_at
+            if claimed_at.tzinfo is not None
+            else claimed_at.replace(tzinfo=timezone.utc)
+        )
+
+        current_expires_at = record.expires_at
+        if current_expires_at is not None:
+            current_expires_at_utc = (
+                current_expires_at
+                if current_expires_at.tzinfo is not None
+                else current_expires_at.replace(tzinfo=timezone.utc)
+            )
+            if current_expires_at_utc <= claimed_at_utc:
+                return False
+        else:
+            current_expires_at_utc = None
+
+        processing_expires_at_utc = (
+            processing_expires_at
+            if processing_expires_at.tzinfo is not None
+            else processing_expires_at.replace(tzinfo=timezone.utc)
+        )
+
+        new_expires_at = current_expires_at
+        if (
+            current_expires_at_utc is None
+            or current_expires_at_utc < processing_expires_at_utc
+        ):
+            new_expires_at = processing_expires_at
+
+        self._incidents[incident_id] = _copy(
+            record.model_copy(
+                update={
+                    "status": APPROVAL_PROCESSING_INCIDENT_STATUS,
+                    "updated_at": claimed_at,
+                    "expires_at": new_expires_at,
+                }
+            )
+        )
+        return True
+
+    def claim_incident_for_timeout(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool:
+        from datetime import timezone
+
+        from backend.app.persistence.incident_status import (
+            TERMINAL_INCIDENT_STATUSES,
+            TIMEOUT_PROCESSING_INCIDENT_STATUS,
+        )
+
+        record = self._incidents.get(incident_id)
+        if record is None:
+            return False
+        if record.status in TERMINAL_INCIDENT_STATUSES:
+            return False
+        if record.expires_at is None:
+            return False
+
+        claimed_at_utc = (
+            claimed_at
+            if claimed_at.tzinfo is not None
+            else claimed_at.replace(tzinfo=timezone.utc)
+        )
+        expires_at_utc = (
+            record.expires_at
+            if record.expires_at.tzinfo is not None
+            else record.expires_at.replace(tzinfo=timezone.utc)
+        )
+
+        # The durable deadline must still be expired at claim time.
+        # This closes the stale-list race with approval claiming.
+        if expires_at_utc > claimed_at_utc:
+            return False
+
+        self._incidents[incident_id] = _copy(
+            record.model_copy(
+                update={
+                    "status": TIMEOUT_PROCESSING_INCIDENT_STATUS,
+                    "updated_at": claimed_at,
+                    "expires_at": processing_expires_at,
+                }
+            )
+        )
+        return True
+
+    def finalize_incident_after_approval(
+        self,
+        incident_id: str,
+        *,
+        status: str,
+        updated_at: datetime,
+        resolved: bool,
+    ) -> bool:
+        from backend.app.persistence.incident_status import (
+            APPROVAL_PROCESSING_INCIDENT_STATUS,
+        )
+
+        record = self._incidents.get(incident_id)
+        if record is None:
+            return False
+        if record.status != APPROVAL_PROCESSING_INCIDENT_STATUS:
+            return False
+
+        self._incidents[incident_id] = _copy(
+            record.model_copy(
+                update={
+                    "status": status,
+                    "updated_at": updated_at,
+                    "resolved": resolved,
+                }
+            )
+        )
+        return True
+
     def list_expired_incidents(self, as_of: datetime) -> list[tuple[str, str | None]]:
         from datetime import timezone
 

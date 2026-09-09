@@ -176,22 +176,21 @@ class IncidentLifecyclePersistence:
         incident_id: str,
         proposal_id: str,
         resumed: IncidentResponseResumeResult,
-    ) -> None:
+    ) -> bool:
         timestamp = self._now()
         approval_status = resumed.approval_status or (
             "approved" if resumed.status == "resolved" else "rejected"
         )
-        existing_incident = self._require_incident(incident_id)
+        self._require_incident(incident_id)
         resolved = resumed.status == "resolved"
-        self._repository.save_incident(
-            existing_incident.model_copy(
-                update={
-                    "status": resumed.status,
-                    "updated_at": timestamp,
-                    "resolved": resolved,
-                }
-            )
+        finalized = self._repository.finalize_incident_after_approval(
+            incident_id,
+            status=resumed.status,
+            updated_at=timestamp,
+            resolved=resolved,
         )
+        if not finalized:
+            return False
         if approval_status == "approved":
             self._append_audit(
                 incident_id=incident_id,
@@ -208,7 +207,7 @@ class IncidentLifecyclePersistence:
                 timestamp=timestamp,
                 metadata={"proposal_id": proposal_id, "resolved": False},
             )
-            return
+            return True
         if resumed.execution_success:
             self._append_audit(
                 incident_id=incident_id,
@@ -231,6 +230,7 @@ class IncidentLifecyclePersistence:
                 "recovered_error_rate_percent": resumed.recovered_error_rate_percent,
             },
         )
+        return True
 
     def _require_incident(self, incident_id: str) -> IncidentRecord:
         record = self._repository.get_incident(incident_id)

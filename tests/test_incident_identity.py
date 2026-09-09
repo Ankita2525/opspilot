@@ -220,3 +220,64 @@ def test_langgraph_thread_id_matches_unique_incident_id() -> None:
     assert saver.get_tuple({"configurable": {"thread_id": first_id}}) is not None
     assert saver.get_tuple({"configurable": {"thread_id": second_id}}) is not None
     assert saver.get_tuple({"configurable": {"thread_id": CHECKOUT_ID}}) is None
+
+
+def test_timeout_claim_blocks_late_approval_with_stale_in_memory_session() -> None:
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import patch
+
+    client, repo, app = _client()
+    events = _parse_sse(_stream(client).text)
+
+    incident_id = events[-1]["incident_id"]
+    session = app.state.store.get(incident_id)
+
+    # Reproduce the production failure shape:
+    # the Python session is still alive while durable state times out.
+    claimed_at = datetime.now(UTC)
+    current = repo.get_incident(incident_id)
+    assert current is not None
+
+    repo.save_incident(
+        current.model_copy(
+            update={"expires_at": claimed_at - timedelta(seconds=1)}
+        )
+    )
+
+    assert repo.claim_incident_for_timeout(
+        incident_id,
+        claimed_at=claimed_at,
+        processing_expires_at=claimed_at + timedelta(minutes=4),
+    )
+
+    # The stale in-memory coordinator must never get a chance to resume.
+    with patch.object(
+        session.coordinator,
+        "resume",
+        wraps=session.coordinator.resume,
+    ) as resume:
+        response = client.post(
+            f"/api/incidents/{incident_id}/approval",
+            json={"approved": True},
+        )
+
+    assert response.status_code == 409
+    resume.assert_not_called()
+
+    stored = repo.get_incident(incident_id)
+    assert stored is not None
+    assert stored.status == "timeout_processing"
+    assert stored.resolved is False
+
+    # No rollback/remediation occurred.
+    metrics = client.get(f"/api/incidents/{incident_id}/metrics").json()
+    assert metrics["p95_latency_ms"] == 1940
+    assert metrics["error_rate_percent"] == 8.2
+
+    event_types = [
+        event.event_type
+        for event in repo.list_audit_events(incident_id)
+    ]
+    assert "approval_approved" not in event_types
+    assert "remediation_executed" not in event_types
+    assert "verification_completed" not in event_types

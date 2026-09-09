@@ -41,6 +41,46 @@ ON CONFLICT (incident_id) DO UPDATE SET
     expires_at = EXCLUDED.expires_at
 """
 
+CLAIM_INCIDENT_FOR_APPROVAL_SQL = """
+UPDATE incidents
+SET
+    status = %s,
+    updated_at = %s,
+    expires_at = CASE
+        WHEN expires_at IS NULL OR expires_at < %s THEN %s
+        ELSE expires_at
+    END
+WHERE incident_id = %s
+  AND status = %s
+  AND resolved = FALSE
+  AND (expires_at IS NULL OR expires_at > %s)
+"""
+
+
+CLAIM_INCIDENT_FOR_TIMEOUT_SQL = f"""
+UPDATE incidents
+SET
+    status = %s,
+    updated_at = %s,
+    expires_at = %s
+WHERE incident_id = %s
+  AND expires_at IS NOT NULL
+  AND expires_at <= %s
+  AND status NOT IN ({list_expired_status_exclusion_sql()})
+"""
+
+
+FINALIZE_INCIDENT_AFTER_APPROVAL_SQL = """
+UPDATE incidents
+SET
+    status = %s,
+    updated_at = %s,
+    resolved = %s
+WHERE incident_id = %s
+  AND status = %s
+"""
+
+
 GET_INCIDENT_SQL = """
 SELECT
     incident_id,
@@ -256,6 +296,81 @@ class PostgresOpsPilotRepository:
                 to_utc(record.expires_at) if record.expires_at else None,
             ),
         )
+
+    def claim_incident_for_approval(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool:
+        from backend.app.persistence.incident_status import (
+            APPROVAL_PROCESSING_INCIDENT_STATUS,
+        )
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                CLAIM_INCIDENT_FOR_APPROVAL_SQL,
+                (
+                    APPROVAL_PROCESSING_INCIDENT_STATUS,
+                    to_utc(claimed_at),
+                    to_utc(processing_expires_at),
+                    to_utc(processing_expires_at),
+                    incident_id,
+                    "approval_required",
+                    to_utc(claimed_at),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def claim_incident_for_timeout(
+        self,
+        incident_id: str,
+        *,
+        claimed_at: datetime,
+        processing_expires_at: datetime,
+    ) -> bool:
+        from backend.app.persistence.incident_status import (
+            TIMEOUT_PROCESSING_INCIDENT_STATUS,
+        )
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                CLAIM_INCIDENT_FOR_TIMEOUT_SQL,
+                (
+                    TIMEOUT_PROCESSING_INCIDENT_STATUS,
+                    to_utc(claimed_at),
+                    to_utc(processing_expires_at),
+                    incident_id,
+                    to_utc(claimed_at),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def finalize_incident_after_approval(
+        self,
+        incident_id: str,
+        *,
+        status: str,
+        updated_at: datetime,
+        resolved: bool,
+    ) -> bool:
+        from backend.app.persistence.incident_status import (
+            APPROVAL_PROCESSING_INCIDENT_STATUS,
+        )
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                FINALIZE_INCIDENT_AFTER_APPROVAL_SQL,
+                (
+                    status,
+                    to_utc(updated_at),
+                    resolved,
+                    incident_id,
+                    APPROVAL_PROCESSING_INCIDENT_STATUS,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def get_incident(self, incident_id: str) -> IncidentRecord | None:
         row = self._fetchone(GET_INCIDENT_SQL, (incident_id,))
