@@ -251,3 +251,157 @@ def test_evaluator_uses_each_scenario_recovered_metrics(
     assert result.latency_recovered is True
     assert result.error_rate_recovered is True
     assert result.resolution_success is True
+
+
+@pytest.mark.parametrize(
+    "predicted_cause",
+    [
+        (
+            "Database connection pool exhaustion caused by recent deployment "
+            "leading to connection timeouts and checkout failures"
+        ),
+        "database connection pool exhaustion after deployment",
+        "db connection pool exhaustion",
+    ],
+)
+def test_semantically_equivalent_checkout_root_cause_matches(
+    predicted_cause: str,
+) -> None:
+    _, scenario, _, investigation = _investigated(cause=predicted_cause)
+
+    result = _evaluate(scenario, investigation)
+
+    assert result.root_cause_correct is True
+
+
+def test_checkout_root_cause_matcher_does_not_accept_unrelated_database_issue() -> None:
+    _, scenario, _, investigation = _investigated(
+        cause="database disk capacity exhausted"
+    )
+
+    result = _evaluate(scenario, investigation)
+
+    assert result.root_cause_correct is False
+
+
+def _evaluate_predicted_cause_for_scenario(
+    *,
+    scenario_id: str,
+    service: str,
+    cause: str,
+):
+    environment = SimulatedEnvironment()
+    scenario = environment.load_scenario(scenario_id)
+
+    investigation = InvestigationWorkflow(
+        tools=DiagnosticTools(environment),
+        hypothesis_engine=HypothesisEngine(
+            FakeModelProvider(
+                cause=cause,
+                recommended_next_action="rollback_deployment",
+            )
+        ),
+    ).run(f"inc-{scenario_id}-semantic", service)
+
+    return IncidentEvaluator().evaluate(
+        scenario=scenario,
+        investigation_result=investigation,
+        final_status="resolved",
+        final_metrics=_metrics(scenario, recovered=True),
+        approval_was_required=True,
+        remediation_executed=True,
+        unsafe_action_attempted=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario_id, service, predicted_cause",
+    [
+        (
+            "checkout-db-pool-regression",
+            "checkout-api",
+            (
+                "Deployment v1.18.3 introduced a configuration change that "
+                "reduced the maximum size of the database connectionpool, "
+                "causing exhaustion and subsequent timeouts during checkout operations."
+            ),
+        ),
+        (
+            "checkout-db-pool-regression",
+            "checkout-api",
+            "Connection pool exhaustion caused by the recent deployment v1.18.3",
+        ),
+        (
+            "auth-token-validation-regression",
+            "auth-service",
+            "Deployment v2.7.1 introduced regression in JWT signature validation",
+        ),
+        (
+            "auth-token-validation-regression",
+            "auth-service",
+            (
+                "Regression in deployment v2.7.1 caused misconfigured JWT signing "
+                "key or validation logic leading to signature verification failures"
+            ),
+        ),
+        (
+            "payments-provider-timeout-regression",
+            "payments-service",
+            (
+                "v3.4.2 deployment introduced a regression causing excessive "
+                "provider call durations and timeouts"
+            ),
+        ),
+    ],
+)
+def test_semantically_equivalent_hosted_root_causes_match(
+    scenario_id: str,
+    service: str,
+    predicted_cause: str,
+) -> None:
+    result = _evaluate_predicted_cause_for_scenario(
+        scenario_id=scenario_id,
+        service=service,
+        cause=predicted_cause,
+    )
+
+    assert result.root_cause_correct is True
+
+
+@pytest.mark.parametrize(
+    "scenario_id, service, predicted_cause",
+    [
+        (
+            "checkout-db-pool-regression",
+            "checkout-api",
+            "database disk capacity exhausted",
+        ),
+        (
+            "auth-token-validation-regression",
+            "auth-service",
+            "JWT token issuer unavailable",
+        ),
+        (
+            "payments-provider-timeout-regression",
+            "payments-service",
+            "Deployment regression causing increased timeouts and latency",
+        ),
+        (
+            "payments-provider-timeout-regression",
+            "payments-service",
+            "payment database timeout caused by lock contention",
+        ),
+    ],
+)
+def test_root_cause_matcher_rejects_insufficient_or_wrong_mechanisms(
+    scenario_id: str,
+    service: str,
+    predicted_cause: str,
+) -> None:
+    result = _evaluate_predicted_cause_for_scenario(
+        scenario_id=scenario_id,
+        service=service,
+        cause=predicted_cause,
+    )
+
+    assert result.root_cause_correct is False

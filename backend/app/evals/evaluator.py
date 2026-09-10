@@ -82,18 +82,70 @@ def _top_hypothesis_cause(investigation_result: InvestigationState) -> str | Non
     return top.cause
 
 
+_ROOT_CAUSE_TOKEN_ALIASES = {
+    "database": "db",
+    "jwt": "token",
+    "timeouts": "timeout",
+}
+
+_GENERIC_ROOT_CAUSE_TOKENS = {
+    "regression",
+}
+
+_ROOT_CAUSE_CONTEXT_TOKENS = {
+    "db",
+    "auth",
+    "payment",
+}
+
+
 def _root_cause_matches(expected: str, predicted: str | None) -> bool:
     if predicted is None:
         return False
-    expected_normalized = _normalize_label(expected)
-    predicted_normalized = _normalize_label(predicted)
-    if expected_normalized == predicted_normalized:
-        return True
-    expected_tokens = [token for token in expected_normalized.split("_") if token]
+
+    expected_tokens = _root_cause_tokens(expected)
+    predicted_tokens = set(_root_cause_tokens(predicted))
+
     return bool(expected_tokens) and all(
-        token in predicted_normalized for token in expected_tokens
+        token in predicted_tokens for token in expected_tokens
     )
 
 
+def _root_cause_tokens(value: str) -> list[str]:
+    normalized = _normalize_label(value)
+
+    tokens: list[str] = []
+    for token in normalized.split("_"):
+        if not token:
+            continue
+
+        canonical = _ROOT_CAUSE_TOKEN_ALIASES.get(token, token)
+
+        if canonical in _GENERIC_ROOT_CAUSE_TOKENS:
+            continue
+        if canonical in _ROOT_CAUSE_CONTEXT_TOKENS:
+            continue
+
+        tokens.append(canonical)
+
+    return tokens
+
+
 def _normalize_label(value: str) -> str:
-    return value.strip().lower().replace(" ", "_").replace("-", "_")
+    normalized = value.strip().lower()
+    normalized = normalized.replace("connectionpool", "connection_pool")
+
+    for separator in (
+        " ",
+        "-",
+        "/",
+        ".",
+        ",",
+        ":",
+        ";",
+        "(",
+        ")",
+    ):
+        normalized = normalized.replace(separator, "_")
+
+    return normalized
