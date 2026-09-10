@@ -2,24 +2,35 @@
 
 **Autonomous Production Engineering Agent**
 
-Production demo: https://opspilot-chi.vercel.app
+[**Live Production Demo →**](https://opspilot-chi.vercel.app)
 
-OpsPilot is an AI-powered production incident-response system that investigates real sandbox services, gathers live telemetry and logs, forms evidence-grounded root-cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post-action telemetry.
+OpsPilot is an AI-powered production incident-response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root-cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post-action telemetry.
 
-The public demo operates controlled ephemeral infrastructure rather than displaying simulated incident results.
+The public demo runs controlled ephemeral infrastructure rather than replaying precomputed incident results.
+
+![OpsPilot recovered incident showing live telemetry, verified rollback, and post-action recovery](docs/assets/opspilot-recovery.png)
+
+## Why OpsPilot
+
+- **Real production-style evidence:** Prometheus metrics, OpenTelemetry traces, Grafana Cloud Loki logs, deployment history, and runtime state feed the investigation.
+- **Bounded autonomy:** the agent can diagnose and recommend, but high-risk remediation requires explicit human approval.
+- **Verified recovery:** approval and execution are not treated as success; OpsPilot requires fresh post-action telemetry before marking an incident resolved.
+- **Failure-aware AI:** structured model output, bounded fallback, typed provider errors, quota controls, and deterministic plus hosted-model evaluation.
+
+## What This Demonstrates
+
+Agentic AI orchestration, production observability, backend systems engineering, human-in-the-loop safety, incident remediation, evaluation infrastructure, and cloud deployment in one end-to-end system.
 
 ## Highlights
 
 - Live incident investigation across metrics, logs, deployments, and runtime state
-- Evidence-grounded root-cause hypotheses
-- Human-in-the-loop approval for high-risk remediation
-- Controlled rollback execution
+- Evidence-grounded root-cause hypotheses with Groq-hosted models
+- Human approval before high-risk rollback execution
 - Fresh post-action recovery verification
-- Prometheus metrics and Grafana Cloud Loki logs
 - Durable incident, approval, lease, and provenance state in PostgreSQL
-- Structured LLM output with bounded model fallback
+- Prometheus, OpenTelemetry, and Grafana Cloud Loki observability
 - Deterministic baseline plus hosted-model evaluation with hidden ground truth
-- Shared-sandbox safety controls and rate limits
+- Shared-sandbox safety controls, Turnstile protection, and rate limits
 - Production deployment on Vercel and Google Cloud Run
 
 ## Incident Workflow
@@ -56,7 +67,37 @@ A deployment introduces upstream provider timeouts and elevated request failures
 
 ## Production Architecture
 
-Browser -> Vercel Next.js -> same-origin API proxy -> Google Cloud Run
+```mermaid
+flowchart LR
+    U[Browser] --> V[Vercel Next.js]
+    V --> P[Same-origin API proxy]
+    P --> O
+
+    subgraph LAB[Google Cloud Run - Live Lab]
+        O[OpsPilot FastAPI]
+        CH[checkout-api]
+        AU[auth-service]
+        PA[payments-service]
+        PR[provider-service]
+        PM[Prometheus]
+        OT[OpenTelemetry Collector]
+    end
+
+    O --> CH
+    O --> AU
+    O --> PA
+    PA --> PR
+    O --> PM
+    CH --> OT
+    AU --> OT
+    PA --> OT
+
+    O --> N[(Neon PostgreSQL)]
+    O --> G[Groq]
+    OT --> L[Grafana Cloud Loki]
+    O --> S[Google Secret Manager]
+    V --> T[Cloudflare Turnstile]
+```
 
 The Cloud Run live lab contains:
 
@@ -120,6 +161,10 @@ The UI exposes:
 - audit trail
 
 ## Safety
+
+High-risk remediation is deliberately gated by explicit human approval:
+
+![OpsPilot human approval gate before rollback execution](docs/assets/opspilot-approval.png)
 
 The public live lab includes:
 
