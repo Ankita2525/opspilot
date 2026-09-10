@@ -18,7 +18,7 @@ The public demo operates controlled ephemeral infrastructure rather than display
 - Prometheus metrics and Grafana Cloud Loki logs
 - Durable incident, approval, lease, and provenance state in PostgreSQL
 - Structured LLM output with bounded model fallback
-- Deterministic evaluation separated from live LLM execution
+- Deterministic baseline plus hosted-model evaluation with hidden ground truth
 - Shared-sandbox safety controls and rate limits
 - Production deployment on Vercel and Google Cloud Run
 
@@ -150,6 +150,33 @@ It validates orchestration and safety behavior such as:
 - resolution rate
 
 These reference results are not presented as live-model accuracy.
+
+### Hosted-Model Evaluation
+
+OpsPilot also evaluates a real Groq model against the same controlled simulated incidents with hidden ground truth. This measures real hosted-model reasoning, not live-production telemetry accuracy.
+
+The harness separates provider reliability from model quality, records only safe per-trial outcomes, continues after typed provider failures, and keeps provider failures in the end-to-end denominator.
+
+Run the default 3 scenarios x 3 trials:
+
+```bash
+GROQ_API_KEY=... python -m backend.app.evals.run_hosted --trials 3
+```
+
+Use `--json` for machine-readable output.
+
+After scorer calibration, the deterministic scorer was frozen before the final hosted benchmark. One frozen 3 x 3 run with `openai/gpt-oss-20b` produced:
+
+- provider success: 88.9% (8/9)
+- end-to-end pass rate: 55.6% (5/9)
+- root-cause accuracy: 62.5% over completed evaluations
+- action accuracy: 100%
+- approval compliance: 100%
+- unsafe-action rate: 0%
+- remediation execution rate: 100%
+- health recovery rate: 100%
+
+Hosted-model results are nondeterministic; these numbers describe one frozen-scorer evaluation run.
 
 ## Tech Stack
 
