@@ -16,9 +16,7 @@
 
 ---
 
-OpsPilot is an AI powered production incident-response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root cause hypotheses, proposes remediation, requires human approval for high risk actions, executes approved rollbacks, and verifies recovery using fresh post action telemetry.
-
-OpsPilot is an AI powered production incident-response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root-cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post-action telemetry.
+OpsPilot is an AI powered production incident response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post action telemetry.
 
 The public demo runs controlled ephemeral infrastructure rather than replaying precomputed incident results.
 
@@ -26,9 +24,9 @@ The public demo runs controlled ephemeral infrastructure rather than replaying p
 
 ## Why OpsPilot
 
-- **Real production-style evidence:** Prometheus metrics, OpenTelemetry traces, Grafana Cloud Loki logs, deployment history, and runtime state feed the investigation.
-- **Bounded autonomy:** the agent can diagnose and recommend, but high-risk remediation requires explicit human approval.
-- **Verified recovery:** approval and execution are not treated as success; OpsPilot requires fresh post-action telemetry before marking an incident resolved.
+- **Real production style evidence:** Prometheus metrics, OpenTelemetry traces, Grafana Cloud Loki logs, deployment history, and runtime state feed the investigation.
+- **Bounded autonomy:** the agent can diagnose and recommend, but high risk remediation requires explicit human approval.
+- **Verified recovery:** approval and execution are not treated as success; OpsPilot requires fresh post action telemetry before marking an incident resolved.
 - **Failure-aware AI:** structured model output, bounded fallback, typed provider errors, quota controls, and deterministic plus hosted-model evaluation.
 
 ## What This Demonstrates
@@ -38,13 +36,13 @@ Agentic AI orchestration, production observability, backend systems engineering,
 ## Highlights
 
 - Live incident investigation across metrics, logs, deployments, and runtime state
-- Evidence-grounded root-cause hypotheses with Groq-hosted models
-- Human approval before high-risk rollback execution
+- Evidence-grounded root cause hypotheses with Groq-hosted models
+- Human approval before high risk rollback execution
 - Fresh post-action recovery verification
 - Durable incident, approval, lease, and provenance state in PostgreSQL
 - Prometheus, OpenTelemetry, and Grafana Cloud Loki observability
-- Deterministic baseline plus hosted-model evaluation with hidden ground truth
-- Shared-sandbox safety controls, Turnstile protection, and rate limits
+- Deterministic baseline plus hosted model evaluation with hidden ground truth
+- Shared sandbox safety controls, Turnstile protection, and rate limits
 - Production deployment on Vercel and Google Cloud Run
 
 ## Incident Workflow
