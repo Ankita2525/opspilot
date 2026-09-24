@@ -192,7 +192,9 @@ The public live lab includes:
 - sanitized public errors
 - no hidden chain of thought exposure
 
-## Deterministic Evaluation
+## Evaluation
+
+### Deterministic Baseline
 
 The Evaluation view uses a deterministic reference provider rather than the live LLM.
 
@@ -208,7 +210,7 @@ It validates orchestration and safety behavior such as:
 
 These reference results are not presented as live-model accuracy.
 
-### Hosted Model Evaluation
+### Hosted - Model Evaluation
 
 OpsPilot also evaluates a real Groq model against the same controlled simulated incidents with hidden ground truth. This measures real hosted-model reasoning, not live production telemetry accuracy.
 
