@@ -20,6 +20,10 @@ The public demo runs controlled ephemeral infrastructure rather than replaying p
 
 ![OpsPilot recovered incident showing live telemetry, verified rollback, and post-action recovery](docs/assets/opspilot-recovery.png)
 
+<p align="center">
+  <em>Live incident run: degraded service → evidence-grounded diagnosis → human-approved rollback → fresh telemetry recovery verification.</em>
+</p>
+
 ## Why OpsPilot
 
 - **Real production style evidence:** Prometheus metrics, OpenTelemetry traces, Grafana Cloud Loki logs, deployment history, and runtime state feed the investigation.
