@@ -1,8 +1,22 @@
-# OpsPilot
+<p align="center">
+  <img src="docs/assets/opspilot-banner.png"
+       alt="OpsPilot — Autonomous Production Engineering Agent"
+       width="100%" />
+</p>
 
-**Autonomous Production Engineering Agent**
+<h1 align="center">OpsPilot</h1>
 
-[**Live Production Demo →**](https://opspilot-chi.vercel.app)
+<p align="center">
+  <strong>Autonomous Production Engineering Agent</strong>
+</p>
+
+<p align="center">
+  <a href="https://opspilot-chi.vercel.app"><strong>🚀 Live Production Demo</strong></a>
+</p>
+
+---
+
+OpsPilot is an AI-powered production incident-response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root-cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post-action telemetry.
 
 OpsPilot is an AI-powered production incident-response system that investigates live sandbox services, gathers real telemetry and logs, forms evidence-grounded root-cause hypotheses, proposes remediation, requires human approval for high-risk actions, executes approved rollbacks, and verifies recovery using fresh post-action telemetry.
 
