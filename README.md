@@ -1,4 +1,10 @@
 <p align="center">
+  <img src="docs/assets/opspilot-banner.png"
+       alt="OpsPilot — Autonomous Production Engineering Agent"
+       width="100%" />
+</p>
+
+<p align="center">
   <a href="https://opspilot-chi.vercel.app"><strong>🚀 Live Production Demo</strong></a>
   &nbsp;•&nbsp;
   <a href="#production-architecture"><strong>Architecture</strong></a>
